@@ -42,3 +42,11 @@ def get_pest_info():
 
     except Exception as e:
         return {"error": f"농사로 연결 실패: {str(e)}"}
+    
+    # ... (기존 코드 생략) ...
+
+if __name__ == "__main__":
+    # 직접 실행했을 때 결과를 출력해서 확인해봅니다.
+    print("🔍 농사로 병해충 API 호출 테스트 중...")
+    result = get_pest_info()
+    print(f"결과: {result}")
