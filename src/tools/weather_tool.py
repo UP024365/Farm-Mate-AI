@@ -1,9 +1,9 @@
 import requests
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
-# .env 파일의 환경변수 로드
+# .env 파일 로드
 load_dotenv()
 
 def get_chungju_weather():
@@ -13,41 +13,58 @@ def get_chungju_weather():
     url = "http://apis.data.go.kr/1360000/VilageFcstInfoService_2.0/getVilageFcst"
     service_key = os.getenv("MET_SERVICE_KEY")
     
-    # 기상청 가이드: 단기예보는 02, 05, 08, 11, 14, 17, 20, 23시에 업데이트됨
     now = datetime.now()
-    base_date = now.strftime("%Y%m%d")
-    base_time = "0500" # 가장 안정적인 새벽 예보 시간 고정
     
+    # 02:10분 이전이면 '어제 23:00' 데이터를 가져옴 (기상청 발표 시간 고려)
+    if now.hour < 2 or (now.hour == 2 and now.minute < 10):
+        base_date = (now - timedelta(days=1)).strftime("%Y%m%d")
+        base_time = "2300"
+    else:
+        base_date = now.strftime("%Y%m%d")
+        available_times = [2, 5, 8, 11, 14, 17, 20, 23]
+        last_time = 2
+        for t in available_times:
+            if now.hour >= t:
+                last_time = t
+            else:
+                break
+        base_time = f"{last_time:02d}00"
+
     params = {
         "serviceKey": service_key,
-        "numOfRows": "50", # 넉넉하게 가져옴
+        "numOfRows": "100", 
         "pageNo": "1",
         "dataType": "JSON",
         "base_date": base_date,
         "base_time": base_time,
-        "nx": "76", # 충주 nx
-        "ny": "114" # 충주 ny
+        "nx": "76", 
+        "ny": "114" 
     }
 
     try:
-        # 서비스키가 인코딩된 경우를 대비해 unquote 처리 (에러 방지용)
         response = requests.get(url, params=params, timeout=10)
-        return response.json()
+        if response.status_code == 200:
+            return response.json()
+        else:
+            return {"error": f"기상청 서버 응답 에러: {response.status_code}"}
     except Exception as e:
-        return {"error": f"API 호출 실패: {str(e)}"}
+        return {"error": f"API 호출 중 예외 발생: {str(e)}"}
 
 def parse_weather(raw_data):
     """
-    복잡한 JSON 데이터를 한글 딕셔너리로 가공합니다.
+    기상청에서 받은 복잡한 JSON 데이터를 사용하기 편하게 한글 딕셔너리로 가공합니다.
     """
     try:
-        # 정상 응답 확인
+        # 데이터가 정상인지 확인
+        if not raw_data or "error" in raw_data:
+            return raw_data if raw_data else {"error": "데이터가 비어있습니다."}
+            
         if raw_data.get('response', {}).get('header', {}).get('resultCode') != '00':
-            return {"error": "기상청 응답 에러 (인증키나 시간 설정을 확인하세요)"}
+            return {"error": "기상청 응답 오류 (키 설정이나 시간을 확인하세요)"}
 
         items = raw_data['response']['body']['items']['item']
         
-        # 기상청 코드 변환 표
+        # 기상청 코드 한글 변환 매핑
         sky_codes = {"1": "맑음 ☀️", "3": "구름많음 ☁️", "4": "흐림 ☁️☁️"}
         pty_codes = {"0": "없음", "1": "비 ☔", "2": "비/눈 🌨️", "3": "눈 ❄️", "4": "소나기 🌦️"}
 
@@ -72,21 +89,3 @@ def parse_weather(raw_data):
 
     except Exception as e:
         return {"error": f"데이터 가공 실패: {str(e)}"}
-
-# --- 테스트 실행부 ---
-if __name__ == "__main__":
-    print("1. 기상청에서 원본 데이터를 가져오는 중...")
-    raw = get_chungju_weather()
-    
-    print("2. 데이터를 한글로 가공하는 중...")
-    result = parse_weather(raw)
-    
-    if "error" in result:
-        print(f"❌ 실패: {result['error']}")
-    else:
-        print("\n✅ [충주 지역 실시간 기상 정보]")
-        print(f"- 현재 기온: {result['temperature']}")
-        print(f"- 하늘 상태: {result['sky']}")
-        print(f"- 현재 습도: {result['humidity']}")
-        print(f"- 강수 형태: {result['rain_type']}")
-        print(f"- 현재 풍속: {result['wind_speed']}")
