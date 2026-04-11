@@ -1,57 +1,120 @@
-import os
-import json
+import requests
+import urllib3
 import ssl
-from urllib.request import Request, urlopen
-from dotenv import load_dotenv
+from datetime import datetime, timedelta
+from requests.adapters import HTTPAdapter
 
-load_dotenv()
+# SSL 경고 무시
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-def get_crop_price():
-    cert_key = os.getenv("KAMIS_SERVICE_KEY")
-    # 최신 평일 날짜 (데이터가 확실히 있는 4월 3일 금요일 기준 테스트)
+class KAMISAdapter(HTTPAdapter):
+    def init_poolmanager(self, *args, **kwargs):
+        context = ssl.create_default_context()
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
+        context.set_ciphers('DEFAULT@SECLEVEL=1')
+        kwargs['ssl_context'] = context
+        return super().init_poolmanager(*args, **kwargs)
+
+def get_crop_price(crop_name="사과"):
+    # 품목 코드 매핑
+    crop_map = {
+        "사과": {"code": "411", "cat": "400"},
+        "배": {"code": "412", "cat": "400"},
+        "포도": {"code": "414", "cat": "400"},
+        "마늘": {"code": "244", "cat": "200"},
+        "양파": {"code": "245", "cat": "200"},
+        "무": {"code": "231", "cat": "200"},
+        "배추": {"code": "211", "cat": "200"},
+        "쌀": {"code": "111", "cat": "100"}
+    }
+
+    target_info = crop_map.get(crop_name, crop_map["사과"])
+
+    session = requests.Session()
+    session.mount("https://", KAMISAdapter())
+
+    # ✅ 수정 1: 올바른 API URL
     base_url = "https://www.kamis.or.kr/service/price/xml.do"
-    params = (
-        f"?action=dailyPriceByCategoryList&p_cert_key={cert_key}&p_cert_id=2712"
-        "&p_returntype=json&p_item_category_code=200&p_product_cls_code=01"
-        "&p_country_code=1101&p_regday=2026-04-03&p_convert_kg_yn=N"
-    )
-    full_url = base_url + params
 
-    try:
-        context = ssl._create_unverified_context()
-        req = Request(full_url)
-        with urlopen(req, context=context, timeout=15) as response:
-            raw_data = response.read().decode('utf-8')
-            data = json.loads(raw_data)
-            
-            # 실제 데이터 안에서 '사과' 찾기 로직
-            if "data" in data and isinstance(data["data"], dict):
-                item_list = data["data"].get("item", [])
-                for item in item_list:
-                    # 사과(후지) 데이터만 필터링
-                    if item.get("item_name") == "사과" and item.get("kind_name") == "후지":
-                        return {
-                            "item_name": "사과(후지)",
-                            "unit": item.get("unit", "10개"),
-                            "price": f"{item.get('dpr1', '0')}원",
-                            "direction": "▲" if item.get("direction") == "0" else "▼",
-                            "value": item.get("value", "0"),
-                            "status": "실시간 데이터 로드 성공"
-                        }
-            
-            # 만약 데이터는 왔는데 사과가 없으면 에러로 간주
-            raise Exception("데이터 내 사과 정보 없음")
-            
-    except Exception as e:
-        # 서버 점검, 주말, SSL 에러 등 발생 시 '안전하게' 가짜 데이터 반환
-        return {
-            "item_name": "사과(후지)",
-            "unit": "10개",
-            "price": "28,500원",
-            "direction": "▲",
-            "value": "500",
-            "status": f"테스트 데이터 (사유: {str(e)})"
+    # 최근 7일 조회 (fallback)
+    for i in range(8):
+        target_date = (datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d")
+
+        params = {
+            "action": "dailySalesList",
+            "p_cert_key": "49be2073-c510-4e68-a02d-2e1c2451a1ae",
+            "p_cert_id": "7590",
+            "p_returntype": "json",
+            "p_product_cls_code": "01",  # 소매
+            "p_item_category_code": target_info["cat"],
+            "p_item_code": target_info["code"],
+            "p_convert_kg_yn": "N",  # ✅ 수정 2: 추가
+            "p_regday": target_date
         }
 
+        try:
+            response = session.get(base_url, params=params, verify=False, timeout=10)
+
+            # 🔍 디버깅용 (문제 있으면 주석 해제)
+            # print("URL:", response.url)
+            # print("응답:", response.text[:200])
+
+            if not response.text.strip():
+                continue
+
+            data = response.json()
+
+            # 데이터 구조 대응
+            items = data.get("price", {}).get("item", [])
+            if not items and isinstance(data.get("data"), list):
+                items = data["data"]
+
+            if items:
+                latest = items[0] if isinstance(items, list) else items
+
+                # 가격 정제 함수
+                def clean_p(p):
+                    p = str(p).replace(",", "").strip()
+                    return int(float(p)) if p not in ["-", "", "None", "0"] else 0
+
+                curr_p = clean_p(latest.get("dpr1", 0))
+                prev_p = clean_p(latest.get("dpr2", 0))
+
+                # ✅ 수정 3: fallback 처리
+                if curr_p == 0 and prev_p != 0:
+                    curr_p = prev_p
+
+                if curr_p == 0:
+                    continue
+
+                # 등락 계산
+                diff = curr_p - prev_p
+                direction = "▲" if diff > 0 else "▼" if diff < 0 else ""
+
+                return {
+                    "item_name": f"{crop_name}({latest.get('rank', '상품')})",
+                    "price": f"{curr_p:,}원",
+                    "direction": direction,
+                    "value": f"{abs(diff):,}",
+                    "unit": latest.get("unit", "-"),
+                    "status": f"{target_date} 최신 시세"
+                }
+
+        except Exception as e:
+            # print("에러:", e)  # 필요하면 확인
+            continue
+
+    # 실패 시
+    return {
+        "item_name": f"{crop_name}(조회불가)",
+        "price": "확인불가",
+        "direction": "",
+        "value": "0",
+        "unit": "-",
+        "status": "안내: 최근 7일 내 집계된 시세가 없습니다."
+    }
+
+
 if __name__ == "__main__":
-    print(get_crop_price())
+    print(get_crop_price("사과"))

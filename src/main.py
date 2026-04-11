@@ -1,83 +1,123 @@
 import streamlit as st
+import os
+from dotenv import load_dotenv
+
+# 1. 수정된 도구 임포트
 from tools.weather_tool import get_chungju_weather, parse_weather
 from tools.price_tool import get_crop_price
 from tools.pest_tool import get_pest_info
 
-st.set_page_config(page_title="Farm-Mate-AI", page_icon="👨‍🌾", layout="wide")
+try:
+    from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+    from langchain_community.vectorstores import Chroma
+    from langchain_core.messages import HumanMessage, AIMessage
+    from langchain_classic.chains import RetrievalQA
+except ImportError:
+    st.error("필수 라이브러리가 없습니다.")
+    st.stop()
 
-st.title("👨‍🌾 Farm-Mate-AI 종합 대시보드")
-st.info("충주 지역 농민을 위한 실시간 통합 정보 서비스입니다.")
+load_dotenv()
+st.set_page_config(page_title="Farm-Mate-AI", page_icon="🌱", layout="wide")
 
-# 1. 데이터 미리 로드 (화면 그리기 전에 한꺼번에 가져오기)
-raw_weather = get_chungju_weather()
-weather = parse_weather(raw_weather)
-price_data = get_crop_price()
-pest_data = get_pest_info()
+# --- 🎨 가독성 극대화 디자인 ---
+st.markdown("""
+    <style>
+    /* 배경 흰색, 글자 검은색 강제 고정 */
+    .stApp { background-color: #FFFFFF !important; }
+    h1, h2, h3, h4, h5, h6, p, span, div { color: #212121 !important; }
+    
+    /* 카드 디자인: 하얀 배경과 대비되도록 연한 회색 테두리 */
+    div[data-testid="stMetric"] {
+        background-color: #F8F9FA !important;
+        border: 1px solid #E0E0E0 !important;
+        border-radius: 10px;
+        padding: 10px;
+    }
+    /* 메트릭 글자색 보정 */
+    div[data-testid="stMetricValue"] > div { color: #1B5E20 !important; }
+    
+    /* 사이드바 색상 */
+    [data-testid="stSidebar"] { background-color: #F1F8E9 !important; }
+    </style>
+    """, unsafe_allow_html=True)
 
-# 3구역으로 화면 나누기
-col_weather, col_price, col_pest = st.columns(3)
+# 2. AI 초기화
+@st.cache_resource
+def init_qa_robot():
+    db_path = "./chroma_db"
+    if not os.path.exists(db_path): return None
+    embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+    vector_db = Chroma(persist_directory=db_path, embedding_function=embeddings)
+    llm = ChatOpenAI(model_name="gpt-4o", temperature=0)
+    return RetrievalQA.from_chain_type(
+        llm=llm, chain_type="stuff",
+        retriever=vector_db.as_retriever(search_kwargs={"k": 3}),
+        return_source_documents=True
+    )
 
-# --- 1. 날씨 섹션 ---
-with col_weather:
-    st.subheader("🌤️ 실시간 날씨")
+qa_robot = init_qa_robot()
+
+# --- 🛠️ 사이드바: 작물 선택 ---
+with st.sidebar:
+    st.title("🌱 Farm-Mate")
+    selected_crop = st.selectbox(
+        "오늘의 분석 작물",
+        ["사과", "배추", "무", "양파", "마늘", "고추", "감자", "대파", "상추", "오이"]
+    )
+    st.divider()
+    st.info(f"현재 {selected_crop} 모드입니다.")
+
+# --- 🏠 메인 화면 ---
+st.title(f"👨‍🌾 {selected_crop} 맞춤형 농사 정보")
+
+# 실시간 데이터 로딩
+weather = parse_weather(get_chungju_weather())
+price = get_crop_price(selected_crop) # 선택한 작물 전달
+pest = get_pest_info()
+
+col1, col2, col3 = st.columns(3)
+
+with col1:
+    st.subheader("🌤️ 충주 날씨")
     if "error" not in weather:
-        st.metric("온도", weather.get('temperature'))
-        st.write(f"**상태:** {weather.get('sky')}")
-        st.write(f"**습도:** {weather.get('humidity')}")
-        st.write(f"**풍속:** {weather.get('wind_speed')}")
+        st.metric("현재 온도", weather.get('temperature'))
+        st.write(f"상태: **{weather.get('sky')}**")
     else:
-        st.error(f"날씨 로드 실패: {weather['error']}")
+        st.error("날씨 로드 실패")
 
-# --- 2. 시세 섹션 (가공된 데이터 표시) ---
-with col_price:
-    st.subheader("💰 오늘의 시세")
-    # API 응답 구조에 맞춰 데이터 추출
-    if "price" in price_data: # 가짜 데이터 모드일 때
-        st.success("실시간 시세 로드 성공")
-        st.metric(f"{price_data['item_name']} ({price_data['unit']})", 
-                  price_data['price'], 
-                  delta=f"{price_data['direction']}{price_data['value']}원")
-    elif "data" in price_data: # 실제 KAMIS 데이터일 때
-        # 첫 번째 품목의 가격 정보를 가져옴
-        item = price_data['data']['item'][0]
-        st.success("전국 평균 시세 로드")
-        st.metric(f"{item['item_name']} ({item['kind_name']})", 
-                  f"{item['dpr1']}원", 
-                  delta=f"{item['direction']} {item['value']}원")
-    else:
-        st.error("시세 정보를 해석할 수 없습니다.")
+with col2:
+    st.subheader(f"💰 {selected_crop} 시세")
+    st.metric(price['item_name'], price['price'], delta=f"{price['direction']} {price['value']}원")
+    st.caption(f"단위: {price['unit']} | {price['status']}")
 
-# --- 3. 병해충 섹션 (최종 보정본) ---
-with col_pest:
-    st.subheader("🐛 병해충 알림")
-    
-    # 데이터가 아예 없을 때
-    if not pest_data:
-        st.info("병해충 정보를 불러오는 중입니다...")
-    
-    # 1. 딕셔너리 형태일 때 (가장 일반적)
-    elif isinstance(pest_data, dict):
-        if "data" in pest_data:
-            st.warning("⚠️ 주의 병해충 발생!")
-            for p in pest_data['data']:
-                st.write(f"📍 **{p['name']}**")
-                st.caption(p['content'])
-        elif "status" in pest_data:
-            st.success("✅ 현재 특이사항 없음")
-            st.write(pest_data['status'])
-        elif "error" in pest_data:
-            st.error(f"에러: {pest_data['error']}")
-        else:
-            st.info("병해충 상세 정보를 분석 중입니다...")
+with col3:
+    st.subheader("🐛 병해충 주의보")
+    found = False
+    if isinstance(pest, dict) and "data" in pest:
+        for p in pest['data']:
+            if selected_crop in p['name'] or selected_crop == "사과":
+                st.warning(f"**{p['name']}**")
+                found = True
+    if not found:
+        st.success("✅ 특이사항 없음")
 
-    # 2. 결과가 그냥 글자(String)로 왔을 때 (예비용)
-    elif isinstance(pest_data, str):
-        if "없습니다" in pest_data or "성공" in pest_data:
-            st.success("✅ 현재 특이사항 없음")
-            st.write(pest_data)
-        else:
-            st.warning("⚠️ 정보 확인")
-            st.write(pest_data)
-            
-# 토큰을 안 쓰기 위해 chat_input은 일단 모양만 둡니다.
-st.chat_input("아직 AI 상담을 시작하지 않았습니다. (토큰 보존 중)")
+st.divider()
+
+# --- 🤖 AI 상담소 ---
+st.subheader(f"🤖 {selected_crop} 전문 상담")
+if "messages" not in st.session_state: st.session_state.messages = []
+
+for msg in st.session_state.messages:
+    role = "user" if isinstance(msg, HumanMessage) else "assistant"
+    with st.chat_message(role): st.markdown(msg.content)
+
+if prompt := st.chat_input(f"{selected_crop}에 대해 궁금한 점을 물어보세요."):
+    st.session_state.messages.append(HumanMessage(content=prompt))
+    with st.chat_message("user"): st.markdown(prompt)
+
+    with st.chat_message("assistant"):
+        if qa_robot:
+            with st.spinner("문서 분석 중..."):
+                res = qa_robot.invoke({"query": f"{selected_crop} 재배 관련: {prompt}"})
+                st.markdown(res["result"])
+                st.session_state.messages.append(AIMessage(content=res["result"]))
