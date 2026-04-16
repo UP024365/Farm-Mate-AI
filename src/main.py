@@ -1,0 +1,200 @@
+import streamlit as st
+import os
+import time
+from dotenv import load_dotenv
+
+# 1. 도구 임포트
+from tools.weather_tool import get_chungju_weather, parse_weather
+from tools.price_tool import get_crop_price
+from tools.pest_tool import get_pest_info
+from tools.tech_tool import get_crop_tech_info
+from tools.weekly_tool import get_weekly_farming_info
+
+try:
+    from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+    from langchain_community.vectorstores import Chroma
+    from langchain_core.messages import HumanMessage, AIMessage
+    from langchain_classic.chains import RetrievalQA
+except ImportError:
+    st.error("필수 라이브러리가 없습니다. 'requirements.txt'를 확인하여 패키지를 설치해주세요.")
+    st.stop()
+
+load_dotenv()
+st.set_page_config(page_title="Farm-Mate-AI", page_icon="🌱", layout="wide")
+
+# 2. 벡터 DB 및 LLM 초기화 (캐싱 적용)
+@st.cache_resource
+def init_qa_robot():
+    # 프로젝트 루트의 chroma_db 경로 설정
+    BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    db_path = os.path.join(BASE_DIR, "chroma_db")
+    
+    if not os.path.exists(db_path):
+        return None, None
+        
+    embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+    vector_db = Chroma(persist_directory=db_path, embedding_function=embeddings)
+    llm = ChatOpenAI(model_name="gpt-4o", temperature=0, streaming=True)
+    return vector_db, llm
+
+vector_db, llm = init_qa_robot()
+
+# --- 사이드바 및 작물 선택 ---
+with st.sidebar:
+    st.title("🌱 Farm-Mate")
+    def reset_chat():
+        st.session_state.messages = []
+
+    # 💡 한-영 매칭 맵 (인제스트 시 사용한 파일명과 정확히 일치해야 함)
+    crop_name_map = {
+        "사과": "apple", "마늘": "garlic", "양파": "onion", 
+        "복숭아": "peach", "고추": "pepper", "감자": "potato", 
+        "무": "radish", "딸기": "strawberry", "고구마": "sweet_potato", 
+        "토마토": "tomato"
+    }
+
+    selected_crop_ko = st.selectbox(
+        "오늘의 분석 작물",
+        list(crop_name_map.keys()),
+        on_change=reset_chat
+    )
+    
+    # 검색 필터에 사용할 영어 태그
+    selected_crop_en = crop_name_map[selected_crop_ko]
+    
+    st.divider()
+    st.info(f"현재 **{selected_crop_ko}** 분석 모드입니다.")
+
+# --- 실시간 데이터 로딩 ---
+weather = parse_weather(get_chungju_weather())
+price = get_crop_price(selected_crop_ko) # 한국어 이름으로 시세 조회
+pest = get_pest_info() 
+tech = get_crop_tech_info(selected_crop_ko) 
+weekly = get_weekly_farming_info() 
+
+st.title(f"👨‍🌾 {selected_crop_ko} 실시간 영농 리포트")
+
+# --- 섹션 1: 대시보드 (날씨, 시세, 특보) ---
+col1, col2, col3 = st.columns(3)
+with col1:
+    st.subheader("🌤️ 충주 날씨")
+    if weather and "error" not in weather:
+        st.metric("현재 온도", weather.get('temperature'))
+        st.write(f"상태: **{weather.get('sky')}**")
+    else:
+        st.write("날씨 정보를 불러올 수 없습니다.")
+
+with col2:
+    st.subheader(f"💰 {selected_crop_ko} 시세")
+    if price:
+        st.metric(price['item_name'], price['price'], delta=f"{price['direction']} {price['value']}원")
+        if price.get('recommendation'):
+            st.info(price['recommendation'])
+
+with col3:
+    st.subheader("🐛 병해충 특보")
+    if isinstance(pest, dict) and "data" in pest:
+        crop_pests = [p for p in pest['data'] if selected_crop_ko in p['name']]
+        if crop_pests:
+            for p in crop_pests:
+                st.error(f"⚠️ {p['name']}")
+        else:
+            st.info(f"✅ {selected_crop_ko} 관련 특보 없음")
+            st.caption("전국 주요 특보:")
+            for p in pest['data'][:2]:
+                st.write(f"🚩 {p['name']}")
+    else:
+        st.success("✅ 전국 병해충 특이사항 없음")
+
+st.divider()
+
+# --- 섹션 2: 전문 기술 및 지침 ---
+col_a, col_b = st.columns(2)
+with col_a:
+    st.subheader(f"📖 {selected_crop_ko} 재배 기술")
+    if isinstance(tech, dict) and "data" in tech:
+        for t in tech['data']:
+            st.write(f"- {t['title']} ({t['date']})")
+    else:
+        st.write("최신 기술 정보를 찾을 수 없습니다.")
+
+with col_b:
+    st.subheader("🗓️ 주간 영농 지침")
+    if isinstance(weekly, dict) and "data" in weekly:
+        for w in weekly['data'][:3]:
+            st.info(f"📍 {w['subject']}")
+    else:
+        st.write("주간 지침 정보를 불러올 수 없습니다.")
+
+st.divider()
+
+# --- 섹션 3: AI 상담소 (RAG 적용) ---
+st.subheader(f"🤖 {selected_crop_ko} 지능형 상담")
+if "messages" not in st.session_state: st.session_state.messages = []
+
+# 대화 기록 출력
+for msg in st.session_state.messages:
+    role = "user" if isinstance(msg, HumanMessage) else "assistant"
+    with st.chat_message(role): st.markdown(msg.content)
+
+if prompt := st.chat_input(f"{selected_crop_ko}에 대해 물어보세요."):
+    st.session_state.messages.append(HumanMessage(content=prompt))
+    with st.chat_message("user"): st.markdown(prompt)
+
+    with st.chat_message("assistant"):
+        if vector_db and llm:
+            message_placeholder = st.empty()
+            
+            with st.spinner("전문 데이터를 분석 중입니다..."):
+                # 실시간 컨텍스트 생성
+                pest_summary = ", ".join([p['name'] for p in pest.get('data', [])]) if isinstance(pest, dict) and "data" in pest else "특이사항 없음"
+                weekly_summary = ", ".join([w['subject'] for w in weekly.get('data', [])[:2]]) if isinstance(weekly, dict) and "data" in weekly else "정보 없음"
+                tech_summary = ", ".join([t['title'] for t in tech.get('data', [])[:2]]) if isinstance(tech, dict) and "data" in tech else "정보 없음"
+
+                weather_context = f"""
+                [현재 실시간 정보]
+                - 현재 온도/날씨: {weather.get('temperature')} / {weather.get('sky')}
+                - 기상 흐름: {weather.get('weather_timeline')}
+                - 현재 시세: {price['price']} ({price['status']})
+                - 병해충 특보: {pest_summary}
+                - 주간 농사 지침: {weekly_summary}
+                - 최신 기술 동향: {tech_summary}
+                """
+                
+                # 💡 핵심: 선택한 작물만 검색하도록 필터 적용
+                search_kwargs = {"k": 3, "filter": {"crop": selected_crop_en}}
+                
+                qa_chain = RetrievalQA.from_chain_type(
+                    llm=llm, 
+                    chain_type="stuff",
+                    retriever=vector_db.as_retriever(search_kwargs=search_kwargs),
+                    return_source_documents=True
+                )
+                
+                system_instruction = f"""
+                너는 농업 전문가 'Farm-Mate' AI야. 
+                제공된 [실시간 정보]와 [재배 지침서]를 바탕으로 '{selected_crop_ko}' 재배에 대해 구체적으로 답변해줘.
+                필요하다면 현재 날씨나 시세를 고려한 행동 지침을 강력하게 추천해줘.
+                """
+                
+                final_query = f"{system_instruction}\n\n{weather_context}\n\n질문: {prompt}"
+                res = qa_chain.invoke({"query": final_query})
+                full_response = res["result"]
+                
+                # 타이핑 효과 시뮬레이션
+                temp_text = ""
+                for char in full_response:
+                    temp_text += char
+                    message_placeholder.markdown(temp_text + "▌")
+                    time.sleep(0.005)
+                message_placeholder.markdown(full_response)
+                
+                # 답변 근거 표시
+                if res.get("source_documents"):
+                    with st.expander("📍 답변의 근거 문서"):
+                        for doc in res["source_documents"]:
+                            st.write(f"- {os.path.basename(doc.metadata.get('source', '지침서'))}")
+            
+            st.session_state.messages.append(AIMessage(content=full_response))
+        else:
+            st.error("AI 상담 시스템이 준비되지 않았습니다. DB 구성을 확인해주세요.")
