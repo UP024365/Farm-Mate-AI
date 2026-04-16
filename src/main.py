@@ -52,7 +52,7 @@ def load_vector_db_safely():
     if os.path.exists(db_path) and os.path.exists(success_flag):
         return True
 
-    file_id = '16jCvj7bhMmb1Ai29IiX9zCsxH6H_HSyT'
+    file_id = '1DbJQnVMy59BYW6cvtNGh9y9cQlVMycoI'
     url = f'https://drive.google.com/uc?export=download&id={file_id}'
     zip_path = os.path.join(BASE_DIR, "chroma_db.zip")
 
