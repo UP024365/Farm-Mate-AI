@@ -41,67 +41,64 @@ LOCATIONS = {
 @st.cache_resource
 def load_vector_db_safely():
     """
-    캐싱을 사용하여 세션마다 반복되는 다운로드를 차단하고, 
-    압축 해제 성공 여부를 확인하는 플래그 파일을 활용합니다.
+    로컬에 폴더가 있으면 다운로드 로직을 아예 실행하지 않습니다.
     """
     BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     db_path = os.path.join(BASE_DIR, "chroma_db")
-    success_flag = os.path.join(db_path, "load_complete.txt") # 완료 확인용
 
-    # 이미 데이터가 완전히 존재하면 바로 리턴
-    if os.path.exists(db_path) and os.path.exists(success_flag):
-        return True
+    # 1. 로컬에 이미 폴더가 존재하는지 최우선 확인
+    if os.path.exists(db_path):
+        # 폴더 내부에 파일이 하나라도 있는지 확인 (비어있는 폴더 방지)
+        if len(os.listdir(db_path)) > 0:
+            return True
 
-    file_id = '1DbJQnVMy59BYW6cvtNGh9y9cQlVMycoI'
+    # 2. 서버(Streamlit Cloud) 환경에서만 작동할 다운로드 로직
+    file_id = '16jCvj7bhMmb1Ai29IiX9zCs+H6H_HSyT'
     url = f'https://drive.google.com/uc?export=download&id={file_id}'
     zip_path = os.path.join(BASE_DIR, "chroma_db.zip")
 
-    with st.spinner("농업 지식 데이터베이스를 최초 1회 동기화 중입니다..."):
+    with st.spinner("서버에 데이터베이스가 없어 동기화를 시도합니다..."):
         try:
-            # gdown 대신 requests를 사용하여 안정적인 스트리밍 다운로드
             response = requests.get(url, stream=True, timeout=30)
             with open(zip_path, 'wb') as f:
                 for chunk in response.iter_content(chunk_size=8192):
                     if chunk: f.write(chunk)
-            
-            # 압축 해제
             with zipfile.ZipFile(zip_path, 'r') as zip_ref:
                 zip_ref.extractall(BASE_DIR)
-            
-            # 해제 성공 후 zip 파일 삭제
             if os.path.exists(zip_path):
                 os.remove(zip_path)
-            
-            # 성공 플래그 생성
-            if not os.path.exists(db_path):
-                os.makedirs(db_path)
-            with open(success_flag, "w", encoding="utf-8") as f:
-                f.write(f"Loaded at {datetime.now()}")
-                
-            st.success("데이터베이스 동기화 완료!")
             return True
         except Exception as e:
-            st.error(f"데이터베이스 로드 중 오류 발생 (구글 차단 가능성): {e}")
+            st.error(f"데이터 로드 실패: 로컬 chroma_db 폴더를 확인해주세요. ({e})")
             return False
 
-# 앱 시작 시 DB 동기화 실행
+# 로드 실행
 load_vector_db_safely()
 
-st.set_page_config(page_title="Farm-Mate-AI", page_icon="🌱", layout="wide")
-
-# --- 벡터 DB 및 LLM 초기화 (캐싱) ---
+# --- [수정] API 키 참조 오류 방지 ---
 @st.cache_resource
 def init_qa_robot():
     BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     db_path = os.path.join(BASE_DIR, "chroma_db")
     
     if not os.path.exists(db_path):
+        st.error("데이터베이스 폴더(chroma_db)를 찾을 수 없습니다.")
         return None, None
         
-    embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
-    vector_db = Chroma(persist_directory=db_path, embedding_function=embeddings)
-    llm = ChatOpenAI(model_name="gpt-4o", temperature=0, streaming=True)
-    return vector_db, llm
+    try:
+        # OpenAI API 키 확인
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            # 로컬 .env에 없으면 st.secrets 확인
+            api_key = st.secrets.get("OPENAI_API_KEY")
+
+        embeddings = OpenAIEmbeddings(model="text-embedding-3-small", openai_api_key=api_key)
+        vector_db = Chroma(persist_directory=db_path, embedding_function=embeddings)
+        llm = ChatOpenAI(model_name="gpt-4o", temperature=0, streaming=True, openai_api_key=api_key)
+        return vector_db, llm
+    except Exception as e:
+        st.error(f"로봇 초기화 실패: {e}")
+        return None, None
 
 vector_db, llm = init_qa_robot()
 
