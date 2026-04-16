@@ -1,101 +1,106 @@
 import requests
 import os
 from datetime import datetime, timedelta
-import streamlit as st
 from dotenv import load_dotenv
 
 load_dotenv()
 
-def get_weather_info(nx=76, ny=114):
-    """
-    실시간 관측(실황)과 향후 예보를 결합하여 반환합니다.
-    """
-    service_key = st.secrets.get("MET_SERVICE_KEY") or os.getenv("MET_SERVICE_KEY")
-    now = datetime.now()
-
-    # --- 1. 실시간 관측 데이터 (지금 온도/강수) ---
-    ncst_url = "http://apis.data.go.kr/1360000/VilageFcstInfoService_2.0/getUltraSrtNcst"
-    # 실황은 40분 기준 업데이트
-    ncst_base_dt = now - timedelta(hours=1) if now.minute < 45 else now
+def get_chungju_weather():
+    url = "http://apis.data.go.kr/1360000/VilageFcstInfoService_2.0/getVilageFcst"
+    service_key = os.getenv("MET_SERVICE_KEY")
     
-    ncst_params = {
-        "serviceKey": service_key,
-        "numOfRows": "20",
-        "dataType": "JSON",
-        "base_date": ncst_base_dt.strftime("%Y%m%d"),
-        "base_time": ncst_base_dt.strftime("%H00"),
-        "nx": nx, "ny": ny
-    }
-
-    # --- 2. 단기 예보 데이터 (미래 타임라인) ---
-    fcst_url = "http://apis.data.go.kr/1360000/VilageFcstInfoService_2.0/getVilageFcst"
-    # 예보는 정해진 시간(2, 5, 8...)에만 발표
-    hours = [2, 5, 8, 11, 14, 17, 20, 23]
+    now = datetime.now()
+    
+    # 기상청 단기예보는 발표 후 DB 반영까지 시간이 걸리므로 20분 여유를 둡니다.
     if now.hour < 2 or (now.hour == 2 and now.minute < 20):
-        fcst_base_date = (now - timedelta(days=1)).strftime("%Y%m%d")
-        fcst_base_time = "2300"
+        base_date = (now - timedelta(days=1)).strftime("%Y%m%d")
+        base_time = "2300"
     else:
-        fcst_base_date = now.strftime("%Y%m%d")
-        fcst_last_hour = max([h for h in hours if h <= now.hour])
-        fcst_base_time = f"{fcst_last_hour:02d}00"
+        base_date = now.strftime("%Y%m%d")
+        available_times = [2, 5, 8, 11, 14, 17, 20, 23]
+        last_time = 2
+        for t in available_times:
+            if now.hour >= t: last_time = t
+            else: break
+        base_time = f"{last_time:02d}00"
 
-    fcst_params = {
+    params = {
         "serviceKey": service_key,
-        "numOfRows": "100",
+        "numOfRows": "100", 
+        "pageNo": "1",
         "dataType": "JSON",
-        "base_date": fcst_base_date,
-        "base_time": fcst_base_time,
-        "nx": nx, "ny": ny
-    }
-
-    result = {
-        "temp": "N/A", "humidity": "N/A", "rain": "0", 
-        "sky": "정보없음", "weather_timeline": ""
+        "base_date": base_date,
+        "base_time": base_time,
+        "nx": "76", 
+        "ny": "114" 
     }
 
     try:
-        # 실황 데이터 가져오기 (현재 날씨)
-        ncst_res = requests.get(ncst_url, params=ncst_params, timeout=10).json()
-        if ncst_res.get('response', {}).get('header', {}).get('resultCode') == '00':
-            items = ncst_res['response']['body']['items']['item']
-            obs_data = {item['category']: item['obsrValue'] for item in items}
-            
-            result["temp"] = obs_data.get('T1H', 'N/A')
-            result["humidity"] = obs_data.get('REH', 'N/A')
-            result["rain"] = obs_data.get('RN1', '0')
-            
-            # 강수 형태 아이콘 설정
-            pty = obs_data.get('PTY', '0')
-            pty_map = {"0": "맑음 ☀️", "1": "비 ☔", "2": "비/눈 🌨️", "3": "눈 ❄️", "4": "소나기 🌦️"}
-            result["sky"] = pty_map.get(pty, "맑음 ☀️")
+        response = requests.get(url, params=params, timeout=10)
+        return response.json()
+    except Exception as e:
+        return {"error": str(e)}
 
-        # 예보 데이터 가져오기 (타임라인)
-        fcst_res = requests.get(fcst_url, params=fcst_params, timeout=10).json()
-        if fcst_res.get('response', {}).get('header', {}).get('resultCode') == '00':
-            items = fcst_res['response']['body']['items']['item']
-            
-            sky_codes = {"1": "맑음 ☀️", "3": "구름많음 ☁️", "4": "흐림 ☁️☁️"}
-            time_summary = {}
-            
-            for item in items:
-                t_key = f"{item['fcstDate']}_{item['fcstTime']}"
-                if t_key not in time_summary:
-                    time_summary[t_key] = {"time": item['fcstTime'], "temp": "", "sky": ""}
-                
-                if item['category'] == "TMP": time_summary[t_key]["temp"] = item['fcstValue']
-                elif item['category'] == "SKY": time_summary[t_key]["sky"] = sky_codes.get(item['fcstValue'], "")
+def parse_weather(raw_data):
+    try:
+        if not raw_data or "error" in raw_data: return raw_data
+        if raw_data.get('response', {}).get('header', {}).get('resultCode') != '00':
+            return {"error": "기상청 응답 오류"}
 
-            # 향후 12시간 중 3시간 간격으로 4개 지점 추출
-            sorted_keys = sorted(time_summary.keys())
-            timeline_parts = []
-            for i in range(0, min(12, len(sorted_keys)), 3):
-                t = time_summary[sorted_keys[i]]
-                timeline_parts.append(f"{t['time'][:2]}시({t['temp']}°C, {t['sky']})")
-            
-            result["weather_timeline"] = " -> ".join(timeline_parts)
+        items = raw_data['response']['body']['items']['item']
+        
+        # 1. 기본 설정
+        target_time = items[0]['fcstTime']
+        target_date = items[0]['fcstDate']
+        sky_codes = {"1": "맑음 ☀️", "3": "구름많음 ☁️", "4": "흐림 ☁️☁️"}
+        pty_codes = {"0": "없음", "1": "비 ☔", "2": "비/눈 🌨️", "3": "눈 ❄️", "4": "소나기 🌦️"}
 
-        return result
+        parsed_result = {
+            "temperature": "정보없음",
+            "sky": "정보없음",
+            "pop": "0%",
+            "fcst_time": f"{target_time[:2]}:00",
+            "timeline": [] # 👈 시간별 흐름을 담을 리스트
+        }
+        
+        # 시간대별 데이터를 임시 저장할 딕셔너리
+        time_summary = {}
+
+        for item in items:
+            f_date = item['fcstDate']
+            f_time = item['fcstTime']
+            category = item['category']
+            value = item['fcstValue']
+            
+            time_key = f"{f_date}_{f_time}"
+            if time_key not in time_summary:
+                time_summary[time_key] = {"time": f_time, "date": f_date}
+
+            # 데이터 분류
+            if category == "TMP": time_summary[time_key]['temp'] = value
+            elif category == "SKY": time_summary[time_key]['sky'] = sky_codes.get(value, "")
+            elif category == "POP": time_summary[time_key]['pop'] = value
+
+            # 2. '현재' 실시간 정보 채우기 (가장 빠른 데이터)
+            if f_time == target_time and f_date == target_date:
+                if category == "TMP": parsed_result['temperature'] = f"{value}°C"
+                elif category == "SKY": parsed_result['sky'] = sky_codes.get(value, "정보없음")
+                elif category == "PTY": parsed_result['rain_type'] = pty_codes.get(value, "정보없음")
+                elif category == "POP": parsed_result['pop'] = f"{value}%"
+
+        # 3. 🤖 AI를 위한 '기상 타임라인' 생성 (향후 12시간, 3시간 간격)
+        sorted_times = sorted(time_summary.keys())[:12] # 앞부분 12개 시간대
+        timeline_str = []
+        
+        for i, k in enumerate(sorted_times):
+            # 3시간 간격으로 요약해서 AI의 읽기 부담을 줄임
+            if i % 3 == 0:
+                t = time_summary[k]
+                timeline_str.append(f"{t['time'][:2]}시({t['temp']}°C, {t['sky']})")
+        
+        parsed_result['weather_timeline'] = " -> ".join(timeline_str)
+        
+        return parsed_result
 
     except Exception as e:
-        print(f"날씨 통합 호출 에러: {e}")
-        return None
+        return {"error": f"데이터 가공 실패: {str(e)}"}

@@ -1,18 +1,19 @@
 import streamlit as st
 import os
 import time
-import gdown
 import zipfile
+import requests
+from datetime import datetime
 from dotenv import load_dotenv
 
 # 1. 도구 임포트
-# weather_tool에서 새로운 로직의 함수를 가져옵니다.
 from tools.weather_tool import get_weather_info 
 from tools.price_tool import get_crop_price
 from tools.pest_tool import get_pest_info
 from tools.tech_tool import get_crop_tech_info
 from tools.weekly_tool import get_weekly_farming_info
 
+# 라이브러리 체크
 try:
     from langchain_openai import ChatOpenAI, OpenAIEmbeddings
     from langchain_community.vectorstores import Chroma
@@ -24,7 +25,7 @@ except ImportError:
 
 load_dotenv()
 
-# --- 지역 데이터 정의 (기상청 nx, ny 좌표) ---
+# --- 지역 데이터 정의 ---
 LOCATIONS = {
     "충청북도 충주시": {"nx": 76, "ny": 114},
     "충청북도 청주시": {"nx": 69, "ny": 107},
@@ -36,33 +37,59 @@ LOCATIONS = {
     "제주특별자치도": {"nx": 52, "ny": 38}
 }
 
-# --- 구글 드라이브 데이터 로드 함수 ---
-def load_vector_db_from_drive():
+# --- [강화된 로직] 구글 드라이브 데이터 동기화 함수 ---
+@st.cache_resource
+def load_vector_db_safely():
+    """
+    캐싱을 사용하여 세션마다 반복되는 다운로드를 차단하고, 
+    압축 해제 성공 여부를 확인하는 플래그 파일을 활용합니다.
+    """
     BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     db_path = os.path.join(BASE_DIR, "chroma_db")
-    zip_path = os.path.join(BASE_DIR, "chroma_db.zip")
-    
+    success_flag = os.path.join(db_path, "load_complete.txt") # 완료 확인용
+
+    # 이미 데이터가 완전히 존재하면 바로 리턴
+    if os.path.exists(db_path) and os.path.exists(success_flag):
+        return True
+
     file_id = '16jCvj7bhMmb1Ai29IiX9zCsxH6H_HSyT'
-    url = f'https://drive.google.com/uc?id={file_id}'
+    url = f'https://drive.google.com/uc?export=download&id={file_id}'
+    zip_path = os.path.join(BASE_DIR, "chroma_db.zip")
 
-    if not os.path.exists(db_path):
-        with st.spinner("구글 드라이브에서 농업 지식 데이터베이스를 불러오는 중입니다..."):
-            try:
-                gdown.download(url, zip_path, quiet=False)
-                with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-                    zip_ref.extractall(BASE_DIR)
-                if os.path.exists(zip_path):
-                    os.remove(zip_path)
-                st.success("데이터베이스 로드 성공!")
-            except Exception as e:
-                st.error(f"데이터 로드 실패: {e}")
+    with st.spinner("농업 지식 데이터베이스를 최초 1회 동기화 중입니다..."):
+        try:
+            # gdown 대신 requests를 사용하여 안정적인 스트리밍 다운로드
+            response = requests.get(url, stream=True, timeout=30)
+            with open(zip_path, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    if chunk: f.write(chunk)
+            
+            # 압축 해제
+            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                zip_ref.extractall(BASE_DIR)
+            
+            # 해제 성공 후 zip 파일 삭제
+            if os.path.exists(zip_path):
+                os.remove(zip_path)
+            
+            # 성공 플래그 생성
+            if not os.path.exists(db_path):
+                os.makedirs(db_path)
+            with open(success_flag, "w", encoding="utf-8") as f:
+                f.write(f"Loaded at {datetime.now()}")
+                
+            st.success("데이터베이스 동기화 완료!")
+            return True
+        except Exception as e:
+            st.error(f"데이터베이스 로드 중 오류 발생 (구글 차단 가능성): {e}")
+            return False
 
-# 앱 시작 시 최우선 실행
-load_vector_db_from_drive()
+# 앱 시작 시 DB 동기화 실행
+load_vector_db_safely()
 
 st.set_page_config(page_title="Farm-Mate-AI", page_icon="🌱", layout="wide")
 
-# 2. 벡터 DB 및 LLM 초기화 (캐싱 적용)
+# --- 벡터 DB 및 LLM 초기화 (캐싱) ---
 @st.cache_resource
 def init_qa_robot():
     BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -82,12 +109,11 @@ vector_db, llm = init_qa_robot()
 with st.sidebar:
     st.title("🌱 Farm-Mate")
     
-    # 지역 선택 기능 추가
     st.header("📍 지역 설정")
     selected_location = st.selectbox(
         "날씨를 확인할 지역을 선택하세요",
         options=list(LOCATIONS.keys()),
-        index=0  # 기본값: 충청북도 충주시
+        index=0
     )
     target_coords = LOCATIONS[selected_location]
     
@@ -113,7 +139,6 @@ with st.sidebar:
     st.info(f"현재 **{selected_crop_ko}** 분석 모드입니다.")
 
 # --- 실시간 데이터 로딩 ---
-# 선택된 지역의 좌표를 weather_tool에 전달합니다.
 weather = get_weather_info(nx=target_coords['nx'], ny=target_coords['ny'])
 price = get_crop_price(selected_crop_ko)
 pest = get_pest_info() 
@@ -122,14 +147,14 @@ weekly = get_weekly_farming_info()
 
 st.title(f"👨‍🌾 {selected_crop_ko} 실시간 영농 리포트")
 
-# --- 섹션 1: 대시보드 (날씨, 시세, 특보) ---
+# --- 섹션 1: 대시보드 ---
 col1, col2, col3 = st.columns(3)
 with col1:
     st.subheader(f"🌤️ {selected_location} 날씨")
     if weather:
         st.metric("현재 온도", f"{weather.get('temp')}°C")
-        st.write(f"습도: **{weather.get('humidity')}%**")
-        st.write(f"강수량: **{weather.get('rain')}**")
+        st.write(f"상태: **{weather.get('sky')}**")
+        st.caption(f"습도: {weather.get('humidity')}% | 강수: {weather.get('rain')}")
     else:
         st.write("날씨 정보를 불러올 수 없습니다.")
 
@@ -152,32 +177,26 @@ with col3:
             st.caption("전국 주요 특보:")
             for p in pest['data'][:2]:
                 st.write(f"🚩 {p['name']}")
-    else:
-        st.success("✅ 전국 병해충 특이사항 없음")
 
 st.divider()
 
-# --- 섹션 2: 전문 기술 및 지침 ---
+# --- 섹션 2: 전문 지침 ---
 col_a, col_b = st.columns(2)
 with col_a:
     st.subheader(f"📖 {selected_crop_ko} 재배 기술")
     if isinstance(tech, dict) and "data" in tech:
         for t in tech['data']:
             st.write(f"- {t['title']} ({t['date']})")
-    else:
-        st.write("최신 기술 정보를 찾을 수 없습니다.")
 
 with col_b:
     st.subheader("🗓️ 주간 영농 지침")
     if isinstance(weekly, dict) and "data" in weekly:
         for w in weekly['data'][:3]:
             st.info(f"📍 {w['subject']}")
-    else:
-        st.write("주간 지침 정보를 불러올 수 없습니다.")
 
 st.divider()
 
-# --- 섹션 3: AI 상담소 (RAG 적용) ---
+# --- 섹션 3: AI 상담소 (RAG) ---
 st.subheader(f"🤖 {selected_crop_ko} 지능형 상담")
 if "messages" not in st.session_state: st.session_state.messages = []
 
@@ -185,7 +204,7 @@ for msg in st.session_state.messages:
     role = "user" if isinstance(msg, HumanMessage) else "assistant"
     with st.chat_message(role): st.markdown(msg.content)
 
-if prompt := st.chat_input(f"{selected_crop_ko}에 대해 물어보세요."):
+if prompt := st.chat_input(f"{selected_crop_ko}에 대해 궁금한 점을 물어보세요."):
     st.session_state.messages.append(HumanMessage(content=prompt))
     with st.chat_message("user"): st.markdown(prompt)
 
@@ -195,17 +214,14 @@ if prompt := st.chat_input(f"{selected_crop_ko}에 대해 물어보세요."):
             with st.spinner("전문 데이터를 분석 중입니다..."):
                 pest_summary = ", ".join([p['name'] for p in pest.get('data', [])]) if isinstance(pest, dict) and "data" in pest else "특이사항 없음"
                 weekly_summary = ", ".join([w['subject'] for w in weekly.get('data', [])[:2]]) if isinstance(weekly, dict) and "data" in weekly else "정보 없음"
-                tech_summary = ", ".join([t['title'] for t in tech.get('data', [])[:2]]) if isinstance(tech, dict) and "data" in tech else "정보 없음"
-
+                
                 weather_context = f"""
                 [현재 실시간 정보]
                 - 위치: {selected_location}
-                - 현재 온도: {weather.get('temp')}°C
-                - 현재 습도: {weather.get('humidity')}%
-                - 현재 시세: {price.get('price', '정보 없음')} ({price.get('status', '-')})
-                - 병해충 특보: {pest_summary}
-                - 주간 농사 지침: {weekly_summary}
-                - 최신 기술 동향: {tech_summary}
+                - 날씨: {weather.get('temp')}°C / {weather.get('sky')}
+                - 기상흐름: {weather.get('weather_timeline')}
+                - 병해충: {pest_summary}
+                - 주간지침: {weekly_summary}
                 """
                 
                 search_kwargs = {"k": 3, "filter": {"crop": selected_crop_en}}
@@ -226,6 +242,7 @@ if prompt := st.chat_input(f"{selected_crop_ko}에 대해 물어보세요."):
                 res = qa_chain.invoke({"query": final_query})
                 full_response = res["result"]
                 
+                # 타이핑 효과
                 temp_text = ""
                 for char in full_response:
                     temp_text += char
