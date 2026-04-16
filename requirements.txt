@@ -1,6 +1,8 @@
 streamlit
 langchain
+langchain-community
 langchain-openai
+langchain-core
 python-dotenv
 pandas
 requests
@@ -10,3 +12,4 @@ google-api-python-client
 google-auth-httplib2
 google-auth-oauthlib
 gdown
+urllib3
