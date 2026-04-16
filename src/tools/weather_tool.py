@@ -1,13 +1,19 @@
 import requests
 import os
 from datetime import datetime, timedelta
+import streamlit as st
 from dotenv import load_dotenv
 
 load_dotenv()
 
-def get_chungju_weather():
+def get_weather_info(nx=76, ny=114):
+    """
+    기상청 API를 호출하여 원본 데이터를 가져옵니다.
+    nx, ny를 매개변수로 받아 지역별 조회가 가능합니다.
+    """
     url = "http://apis.data.go.kr/1360000/VilageFcstInfoService_2.0/getVilageFcst"
-    service_key = os.getenv("MET_SERVICE_KEY")
+    # Streamlit Cloud 환경이면 st.secrets를, 로컬이면 os.getenv를 사용
+    service_key = st.secrets.get("MET_SERVICE_KEY") or os.getenv("MET_SERVICE_KEY")
     
     now = datetime.now()
     
@@ -31,39 +37,43 @@ def get_chungju_weather():
         "dataType": "JSON",
         "base_date": base_date,
         "base_time": base_time,
-        "nx": "76", 
-        "ny": "114" 
+        "nx": nx, 
+        "ny": ny 
     }
 
     try:
         response = requests.get(url, params=params, timeout=10)
-        return response.json()
+        raw_data = response.json()
+        # 원본 데이터를 바로 파싱 함수로 넘겨 결과를 반환합니다.
+        return parse_weather(raw_data)
     except Exception as e:
         return {"error": str(e)}
 
 def parse_weather(raw_data):
+    """
+    기상청의 복잡한 JSON 데이터를 앱에서 쓰기 좋게 가공합니다.
+    """
     try:
-        if not raw_data or "error" in raw_data: return raw_data
+        if not raw_data or "error" in raw_data: return None
         if raw_data.get('response', {}).get('header', {}).get('resultCode') != '00':
-            return {"error": "기상청 응답 오류"}
+            return None
 
         items = raw_data['response']['body']['items']['item']
         
-        # 1. 기본 설정
+        # 기본 설정 (첫 번째 데이터 기준)
         target_time = items[0]['fcstTime']
         target_date = items[0]['fcstDate']
         sky_codes = {"1": "맑음 ☀️", "3": "구름많음 ☁️", "4": "흐림 ☁️☁️"}
-        pty_codes = {"0": "없음", "1": "비 ☔", "2": "비/눈 🌨️", "3": "눈 ❄️", "4": "소나기 🌦️"}
-
+        
+        # main.py에서 기대하는 키 값들로 초기화
         parsed_result = {
-            "temperature": "정보없음",
+            "temp": "N/A",      # 온도
+            "humidity": "N/A",  # 습도(REH)
+            "rain": "0",        # 강수량(RN1) 혹은 강수확률(POP)
             "sky": "정보없음",
-            "pop": "0%",
-            "fcst_time": f"{target_time[:2]}:00",
-            "timeline": [] # 👈 시간별 흐름을 담을 리스트
+            "weather_timeline": "" # AI 상담용 타임라인
         }
         
-        # 시간대별 데이터를 임시 저장할 딕셔너리
         time_summary = {}
 
         for item in items:
@@ -76,31 +86,30 @@ def parse_weather(raw_data):
             if time_key not in time_summary:
                 time_summary[time_key] = {"time": f_time, "date": f_date}
 
-            # 데이터 분류
+            # 시간대별 데이터 저장
             if category == "TMP": time_summary[time_key]['temp'] = value
             elif category == "SKY": time_summary[time_key]['sky'] = sky_codes.get(value, "")
-            elif category == "POP": time_summary[time_key]['pop'] = value
+            elif category == "REH": time_summary[time_key]['humidity'] = value
 
-            # 2. '현재' 실시간 정보 채우기 (가장 빠른 데이터)
+            # 현재 시간(가장 빠른 예보) 데이터 추출
             if f_time == target_time and f_date == target_date:
-                if category == "TMP": parsed_result['temperature'] = f"{value}°C"
+                if category == "TMP": parsed_result['temp'] = value
+                elif category == "REH": parsed_result['humidity'] = value
+                elif category == "RN1": parsed_result['rain'] = value if value != "강수없음" else "0"
                 elif category == "SKY": parsed_result['sky'] = sky_codes.get(value, "정보없음")
-                elif category == "PTY": parsed_result['rain_type'] = pty_codes.get(value, "정보없음")
-                elif category == "POP": parsed_result['pop'] = f"{value}%"
 
-        # 3. 🤖 AI를 위한 '기상 타임라인' 생성 (향후 12시간, 3시간 간격)
-        sorted_times = sorted(time_summary.keys())[:12] # 앞부분 12개 시간대
-        timeline_str = []
-        
+        # AI를 위한 타임라인 생성 (3시간 간격)
+        sorted_times = sorted(time_summary.keys())[:12]
+        timeline_list = []
         for i, k in enumerate(sorted_times):
-            # 3시간 간격으로 요약해서 AI의 읽기 부담을 줄임
             if i % 3 == 0:
                 t = time_summary[k]
-                timeline_str.append(f"{t['time'][:2]}시({t['temp']}°C, {t['sky']})")
+                timeline_list.append(f"{t['time'][:2]}시({t.get('temp', '-')}°C, {t.get('sky', '-')})")
         
-        parsed_result['weather_timeline'] = " -> ".join(timeline_str)
+        parsed_result['weather_timeline'] = " -> ".join(timeline_list)
         
         return parsed_result
 
     except Exception as e:
-        return {"error": f"데이터 가공 실패: {str(e)}"}
+        print(f"데이터 가공 실패: {e}")
+        return None

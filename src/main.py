@@ -6,7 +6,8 @@ import zipfile
 from dotenv import load_dotenv
 
 # 1. 도구 임포트
-from tools.weather_tool import get_chungju_weather, parse_weather
+# weather_tool에서 새로운 로직의 함수를 가져옵니다.
+from tools.weather_tool import get_weather_info 
 from tools.price_tool import get_crop_price
 from tools.pest_tool import get_pest_info
 from tools.tech_tool import get_crop_tech_info
@@ -23,18 +24,27 @@ except ImportError:
 
 load_dotenv()
 
+# --- 지역 데이터 정의 (기상청 nx, ny 좌표) ---
+LOCATIONS = {
+    "충청북도 충주시": {"nx": 76, "ny": 114},
+    "충청북도 청주시": {"nx": 69, "ny": 107},
+    "서울특별시": {"nx": 60, "ny": 127},
+    "경기도 수원시": {"nx": 60, "ny": 121},
+    "강원도 춘천시": {"nx": 73, "ny": 134},
+    "경상북도 안동시": {"nx": 91, "ny": 106},
+    "전라남도 나주시": {"nx": 56, "ny": 71},
+    "제주특별자치도": {"nx": 52, "ny": 38}
+}
+
 # --- 구글 드라이브 데이터 로드 함수 ---
 def load_vector_db_from_drive():
-    # 프로젝트 루트 기준으로 경로 설정 (src 폴더의 상위 폴더)
     BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     db_path = os.path.join(BASE_DIR, "chroma_db")
     zip_path = os.path.join(BASE_DIR, "chroma_db.zip")
     
-    # 구글 드라이브 파일 ID
     file_id = '16jCvj7bhMmb1Ai29IiX9zCsxH6H_HSyT'
     url = f'https://drive.google.com/uc?id={file_id}'
 
-    # chroma_db 폴더가 없는 경우에만 실행
     if not os.path.exists(db_path):
         with st.spinner("구글 드라이브에서 농업 지식 데이터베이스를 불러오는 중입니다..."):
             try:
@@ -68,9 +78,21 @@ def init_qa_robot():
 
 vector_db, llm = init_qa_robot()
 
-# --- 사이드바 및 작물 선택 ---
+# --- 사이드바 및 설정 ---
 with st.sidebar:
     st.title("🌱 Farm-Mate")
+    
+    # 지역 선택 기능 추가
+    st.header("📍 지역 설정")
+    selected_location = st.selectbox(
+        "날씨를 확인할 지역을 선택하세요",
+        options=list(LOCATIONS.keys()),
+        index=0  # 기본값: 충청북도 충주시
+    )
+    target_coords = LOCATIONS[selected_location]
+    
+    st.divider()
+
     def reset_chat():
         st.session_state.messages = []
 
@@ -88,11 +110,11 @@ with st.sidebar:
     )
     
     selected_crop_en = crop_name_map[selected_crop_ko]
-    st.divider()
     st.info(f"현재 **{selected_crop_ko}** 분석 모드입니다.")
 
 # --- 실시간 데이터 로딩 ---
-weather = parse_weather(get_chungju_weather())
+# 선택된 지역의 좌표를 weather_tool에 전달합니다.
+weather = get_weather_info(nx=target_coords['nx'], ny=target_coords['ny'])
 price = get_crop_price(selected_crop_ko)
 pest = get_pest_info() 
 tech = get_crop_tech_info(selected_crop_ko) 
@@ -103,10 +125,11 @@ st.title(f"👨‍🌾 {selected_crop_ko} 실시간 영농 리포트")
 # --- 섹션 1: 대시보드 (날씨, 시세, 특보) ---
 col1, col2, col3 = st.columns(3)
 with col1:
-    st.subheader("🌤️ 충주 날씨")
-    if weather and "error" not in weather:
-        st.metric("현재 온도", weather.get('temperature'))
-        st.write(f"상태: **{weather.get('sky')}**")
+    st.subheader(f"🌤️ {selected_location} 날씨")
+    if weather:
+        st.metric("현재 온도", f"{weather.get('temp')}°C")
+        st.write(f"습도: **{weather.get('humidity')}%**")
+        st.write(f"강수량: **{weather.get('rain')}**")
     else:
         st.write("날씨 정보를 불러올 수 없습니다.")
 
@@ -176,9 +199,10 @@ if prompt := st.chat_input(f"{selected_crop_ko}에 대해 물어보세요."):
 
                 weather_context = f"""
                 [현재 실시간 정보]
-                - 현재 온도/날씨: {weather.get('temperature')} / {weather.get('sky')}
-                - 기상 흐름: {weather.get('weather_timeline')}
-                - 현재 시세: {price['price']} ({price['status']})
+                - 위치: {selected_location}
+                - 현재 온도: {weather.get('temp')}°C
+                - 현재 습도: {weather.get('humidity')}%
+                - 현재 시세: {price.get('price', '정보 없음')} ({price.get('status', '-')})
                 - 병해충 특보: {pest_summary}
                 - 주간 농사 지침: {weekly_summary}
                 - 최신 기술 동향: {tech_summary}
@@ -195,7 +219,7 @@ if prompt := st.chat_input(f"{selected_crop_ko}에 대해 물어보세요."):
                 system_instruction = f"""
                 너는 농업 전문가 'Farm-Mate' AI야. 
                 제공된 [실시간 정보]와 [재배 지침서]를 바탕으로 '{selected_crop_ko}' 재배에 대해 구체적으로 답변해줘.
-                필요하다면 현재 날씨나 시세를 고려한 행동 지침을 강력하게 추천해줘.
+                필요하다면 현재 지역({selected_location})의 날씨나 시세를 고려한 행동 지침을 강력하게 추천해줘.
                 """
                 
                 final_query = f"{system_instruction}\n\n{weather_context}\n\n질문: {prompt}"
