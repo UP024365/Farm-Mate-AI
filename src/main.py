@@ -1,6 +1,8 @@
 import streamlit as st
 import os
 import time
+import gdown
+import zipfile
 from dotenv import load_dotenv
 
 # 1. 도구 임포트
@@ -20,12 +22,39 @@ except ImportError:
     st.stop()
 
 load_dotenv()
+
+# --- 구글 드라이브 데이터 로드 함수 ---
+def load_vector_db_from_drive():
+    # 프로젝트 루트 기준으로 경로 설정 (src 폴더의 상위 폴더)
+    BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    db_path = os.path.join(BASE_DIR, "chroma_db")
+    zip_path = os.path.join(BASE_DIR, "chroma_db.zip")
+    
+    # 구글 드라이브 파일 ID
+    file_id = '16jCvj7bhMmb1Ai29IiX9zCsxH6H_HSyT'
+    url = f'https://drive.google.com/uc?id={file_id}'
+
+    # chroma_db 폴더가 없는 경우에만 실행
+    if not os.path.exists(db_path):
+        with st.spinner("구글 드라이브에서 농업 지식 데이터베이스를 불러오는 중입니다..."):
+            try:
+                gdown.download(url, zip_path, quiet=False)
+                with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                    zip_ref.extractall(BASE_DIR)
+                if os.path.exists(zip_path):
+                    os.remove(zip_path)
+                st.success("데이터베이스 로드 성공!")
+            except Exception as e:
+                st.error(f"데이터 로드 실패: {e}")
+
+# 앱 시작 시 최우선 실행
+load_vector_db_from_drive()
+
 st.set_page_config(page_title="Farm-Mate-AI", page_icon="🌱", layout="wide")
 
 # 2. 벡터 DB 및 LLM 초기화 (캐싱 적용)
 @st.cache_resource
 def init_qa_robot():
-    # 프로젝트 루트의 chroma_db 경로 설정
     BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     db_path = os.path.join(BASE_DIR, "chroma_db")
     
@@ -45,7 +74,6 @@ with st.sidebar:
     def reset_chat():
         st.session_state.messages = []
 
-    # 💡 한-영 매칭 맵 (인제스트 시 사용한 파일명과 정확히 일치해야 함)
     crop_name_map = {
         "사과": "apple", "마늘": "garlic", "양파": "onion", 
         "복숭아": "peach", "고추": "pepper", "감자": "potato", 
@@ -59,15 +87,13 @@ with st.sidebar:
         on_change=reset_chat
     )
     
-    # 검색 필터에 사용할 영어 태그
     selected_crop_en = crop_name_map[selected_crop_ko]
-    
     st.divider()
     st.info(f"현재 **{selected_crop_ko}** 분석 모드입니다.")
 
 # --- 실시간 데이터 로딩 ---
 weather = parse_weather(get_chungju_weather())
-price = get_crop_price(selected_crop_ko) # 한국어 이름으로 시세 조회
+price = get_crop_price(selected_crop_ko)
 pest = get_pest_info() 
 tech = get_crop_tech_info(selected_crop_ko) 
 weekly = get_weekly_farming_info() 
@@ -132,7 +158,6 @@ st.divider()
 st.subheader(f"🤖 {selected_crop_ko} 지능형 상담")
 if "messages" not in st.session_state: st.session_state.messages = []
 
-# 대화 기록 출력
 for msg in st.session_state.messages:
     role = "user" if isinstance(msg, HumanMessage) else "assistant"
     with st.chat_message(role): st.markdown(msg.content)
@@ -144,9 +169,7 @@ if prompt := st.chat_input(f"{selected_crop_ko}에 대해 물어보세요."):
     with st.chat_message("assistant"):
         if vector_db and llm:
             message_placeholder = st.empty()
-            
             with st.spinner("전문 데이터를 분석 중입니다..."):
-                # 실시간 컨텍스트 생성
                 pest_summary = ", ".join([p['name'] for p in pest.get('data', [])]) if isinstance(pest, dict) and "data" in pest else "특이사항 없음"
                 weekly_summary = ", ".join([w['subject'] for w in weekly.get('data', [])[:2]]) if isinstance(weekly, dict) and "data" in weekly else "정보 없음"
                 tech_summary = ", ".join([t['title'] for t in tech.get('data', [])[:2]]) if isinstance(tech, dict) and "data" in tech else "정보 없음"
@@ -161,9 +184,7 @@ if prompt := st.chat_input(f"{selected_crop_ko}에 대해 물어보세요."):
                 - 최신 기술 동향: {tech_summary}
                 """
                 
-                # 💡 핵심: 선택한 작물만 검색하도록 필터 적용
                 search_kwargs = {"k": 3, "filter": {"crop": selected_crop_en}}
-                
                 qa_chain = RetrievalQA.from_chain_type(
                     llm=llm, 
                     chain_type="stuff",
@@ -181,7 +202,6 @@ if prompt := st.chat_input(f"{selected_crop_ko}에 대해 물어보세요."):
                 res = qa_chain.invoke({"query": final_query})
                 full_response = res["result"]
                 
-                # 타이핑 효과 시뮬레이션
                 temp_text = ""
                 for char in full_response:
                     temp_text += char
@@ -189,7 +209,6 @@ if prompt := st.chat_input(f"{selected_crop_ko}에 대해 물어보세요."):
                     time.sleep(0.005)
                 message_placeholder.markdown(full_response)
                 
-                # 답변 근거 표시
                 if res.get("source_documents"):
                     with st.expander("📍 답변의 근거 문서"):
                         for doc in res["source_documents"]:
