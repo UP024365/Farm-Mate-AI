@@ -172,8 +172,6 @@ with col3:
 # 섹션 2: 병해충 경보 및 실시간 영농 알람
 col_left, col_right = st.columns(2)
 
-col_left, col_right = st.columns(2)
-
 with col_left:
     st.markdown('<div class="farm-card"><div class="card-label">📡 병해충 발생 현황 및 분석</div>', unsafe_allow_html=True)
     
