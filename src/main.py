@@ -25,96 +25,76 @@ except ImportError:
 
 load_dotenv()
 
-# --- 1. 페이지 및 테마 설정 ---
-# --- 1. 페이지 및 테마 설정 ---
+# --- 1. 페이지 설정 및 기본 스타일 ---
 st.set_page_config(page_title="Farm-Mate-AI", page_icon="🌱", layout="wide")
 
-if "theme" not in st.session_state:
-    st.session_state.theme = "Dark"
+bg_col = "#0D1117"    # 전체 배경 (GitHub Dark 느낌)
+side_col = "#0D1117"  # 사이드바
+card_col = "#161B22"  # 카드 배경
+txt_col = "#E6EDF3"   # 메인 글자색
+sub_txt_col = "#8B949E"
+border_col = "#30363D"
 
-with st.sidebar:
-    st.markdown("### 🎨 UI THEME")
-    theme_choice = st.radio("Select Mode", ["Dark", "Light"], horizontal=True, label_visibility="collapsed")
-    st.session_state.theme = theme_choice
-
-# --- 2. 테마별 색상 변수 (더 확실하게 정의) ---
-if st.session_state.theme == "Dark":
-    bg_col, side_col, card_col = "#0D1117", "#0D1117", "#161B22"
-    txt_col, sub_txt_col, border_col = "#FFFFFF", "#8B949E", "#30363D"
-    widget_bg = "#21262D" # 선택창 내부 배경
-    icon_filter = "none"
-else:
-    bg_col, side_col, card_col = "#FFFFFF", "#F6F8FA", "#F6F8FA"
-    txt_col, sub_txt_col, border_col = "#1A1C24", "#57606A", "#D0D7DE"
-    widget_bg = "#FFFFFF" # 선택창 내부 배경
-    icon_filter = "invert(0.8)"
-
-# --- 3. 커스텀 CSS (강력한 강제성 부여) ---
+# --- 2. 강력한 다크모드 전용 CSS ---
 st.markdown(f"""
     <style>
-    /* 1. 전체 앱 배경 및 상단 헤더 영역 */
-    .stApp, header, [data-testid="stHeader"] {{
+    /* 전체 앱 배경 */
+    .stApp {{
         background-color: {bg_col} !important;
-    }}
-
-    /* 2. 모든 텍스트 색상 강제 */
-    .stApp p, .stApp span, .stApp label, .stApp h1, .stApp h2, .stApp h3, .stApp h4, .stApp li {{
         color: {txt_col} !important;
     }}
 
-    /* 3. 사이드바 전체 및 내부 위젯 */
-    [data-testid="stSidebar"], [data-testid="stSidebar"] div, [data-testid="stSidebar"] p {{
+    /* 텍스트 시인성 확보: 모든 글자를 밝은 회색으로 강제 */
+    p, span, label, h1, h2, h3, h4, li {{
+        color: {txt_col} !important;
+    }}
+
+    /* 사이드바 스타일 */
+    [data-testid="stSidebar"] {{
         background-color: {side_col} !important;
-        color: {txt_col} !important;
+        border-right: 1px solid {border_col};
     }}
 
-    /* 4. 문제의 SELECTBOX (선택창) 강제 수정 */
+    /* 선택창(Selectbox) 스타일: 배경은 어둡게, 글자는 밝게 */
     div[data-baseweb="select"] > div {{
-        background-color: {widget_bg} !important;
+        background-color: {card_col} !important;
         color: {txt_col} !important;
         border: 1px solid {border_col} !important;
     }}
+    
     /* 선택창 내부 리스트 아이템 */
     div[data-baseweb="popover"] li {{
-        background-color: {widget_bg} !important;
+        background-color: {card_col} !important;
         color: {txt_col} !important;
     }}
 
-    /* 5. 각진 카드 컨테이너 */
-    .farm-card {{
+    /* 채팅 메시지 박스 (가장 문제였던 부분) */
+    [data-testid="stChatMessage"] {{
         background-color: {card_col} !important;
         border: 1px solid {border_col} !important;
-        border-radius: 0px !important;
-        padding: 24px;
-        margin-bottom: 20px;
+        border-radius: 8px !important;
     }}
-    .card-label {{ color: {sub_txt_col} !important; font-size: 12px; font-weight: bold; }}
-    .card-value {{ color: {txt_col} !important; font-size: 32px; font-weight: bold; }}
+    [data-testid="stChatMessage"] p {{
+        color: {txt_col} !important; /* 채팅 글자색 강제 */
+    }}
 
-    /* 6. 문제의 채팅 입력창 (stChatInput) 강제 수정 */
-    [data-testid="stChatInput"] {{
-        background-color: transparent !important; /* 하단 바 전체 배경 */
-    }}
+    /* 채팅 입력창 배경 및 테두리 */
     [data-testid="stChatInput"] textarea {{
         background-color: {card_col} !important;
         color: {txt_col} !important;
         border: 1px solid {border_col} !important;
     }}
 
-    /* 7. 채팅 메시지 박스 */
-    [data-testid="stChatMessage"] {{
+    /* 농장 대시보드 카드 */
+    .farm-card {{
         background-color: {card_col} !important;
         border: 1px solid {border_col} !important;
-        border-radius: 0px !important;
+        border-radius: 12px !important;
+        padding: 24px;
+        margin-bottom: 20px;
     }}
-
-    /* 8. 아이콘 시인성 보정 */
-    [data-testid="stIcon"], [data-testid="stAvatar"] svg {{
-        filter: {icon_filter} !important;
-    }}
-
-    /* 구분선 */
-    hr {{ border-top: 1px solid {border_col} !important; }}
+    .card-label {{ color: {sub_txt_col} !important; font-size: 13px; font-weight: bold; }}
+    .card-value {{ color: {txt_col} !important; font-size: 32px; font-weight: bold; }}
     </style>
     """, unsafe_allow_html=True)
 
