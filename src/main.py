@@ -228,7 +228,7 @@ with col_right:
         st.write("알람 정보를 생성할 수 없습니다.")
     st.markdown('</div>', unsafe_allow_html=True)
 
-# --- 섹션 3: AI 상담소 (입력창 및 버튼 클릭 통합 로직) ---
+# --- 섹션 3: AI 상담소 (업데이트된 통합 로직) ---
 st.markdown(f"#### 🤖 {selected_crop_ko} 지능형 상담 센터")
 
 # 1. 채팅 출력 컨테이너 (이전 대화 기록 표시)
@@ -239,7 +239,7 @@ with chat_placeholder:
         with st.chat_message(role):
             st.markdown(msg.content)
 
-# 2. 채팅 입력창 (사용자가 직접 타이핑)
+# 2. 채팅 입력창
 prompt = st.chat_input(f"{selected_crop_ko} 재배에 대해 무엇이든 물어보세요.")
 
 # 사용자가 직접 입력했을 경우 세션에 추가 후 화면 갱신
@@ -247,29 +247,34 @@ if prompt:
     st.session_state.messages.append(HumanMessage(content=prompt))
     st.rerun()
 
-# 3. 🔥 핵심 로직: 마지막 메시지가 '사용자(HumanMessage)'라면 AI 답변 생성 시작
-# (직접 입력했거나, 버튼 클릭으로 메시지가 들어왔을 때 모두 작동합니다)
+# 3. 🔥 AI 답변 생성 시작 (실시간 데이터 컨텍스트 강화)
 if st.session_state.messages and isinstance(st.session_state.messages[-1], HumanMessage):
     last_user_msg = st.session_state.messages[-1].content
     
     with st.chat_message("assistant"):
         if vector_db and llm:
             message_placeholder = st.empty()
-            with st.spinner(f"AI 전문가가 {selected_crop_ko} 데이터를 분석 중입니다..."):
-                # 1. 실시간 환경 정보 요약
+            with st.spinner(f"AI 전문가가 {selected_crop_ko} 데이터를 정밀 분석 중입니다..."):
+                
+                # [실시간 정보 요약 생성]
                 weather_summary = weather.get('summary', f"현재 기온 {weather.get('temp')}도") if weather else "날씨 정보 없음"
                 pest_summary = ", ".join([p['name'] for p in pest.get('data', [])]) if isinstance(pest, dict) and "data" in pest else "특이사항 없음"
                 
-                weather_context = f"""
+                # 실시간 시세 정보 요약 (AI가 읽을 수 있도록 추가)
+                price_summary = f"현재 {selected_crop_ko} 시세: {price['price']}원 ({price.get('direction', '')} {price.get('value', '0')}원). 추천: {price.get('recommendation', '없음')}" if price else "시세 정보 없음"
+
+                # [통합 컨텍스트 구성]
+                context_for_ai = f"""
                 [사용자 설정 및 실시간 정보]
                 - 선택된 작물: {selected_crop_ko}
                 - 현재 위치: {selected_location}
                 - 현재 날씨: {weather_summary}
+                - 실시간 시세: {price_summary}
                 - 병해충 상황: {pest_summary}
+                - 업로드된 PDF 보고서(2023-2026 병해충 발생정보)가 데이터베이스에 포함되어 있음.
                 """
                 
-                # 2. RAG 기반 질의응답 체인 생성
-                # 특정 작물(selected_crop_en)의 지침서만 검색하도록 필터링 적용
+                # [RAG 체인 설정] 작물 필터링 적용
                 search_kwargs = {"k": 3, "filter": {"crop": selected_crop_en}}
                 qa_chain = RetrievalQA.from_chain_type(
                     llm=llm, 
@@ -278,21 +283,21 @@ if st.session_state.messages and isinstance(st.session_state.messages[-1], Human
                     return_source_documents=True
                 )
                 
-                # 3. 프롬프트 구성 (작물 페르소나 강화)
+                # [프롬프트 구성]
                 final_query = f"""
-                너는 농업 전문가야. 지금 사용자는 '{selected_crop_ko}'를 선택했어.
-                다른 작물에 대해 묻지 말고, 반드시 '{selected_crop_ko}'와 관련된 지침서 내용과 아래 환경 정보를 바탕으로 답변해줘.
-
-                {weather_context}
+                너는 농업 전문가야. 사용자의 질문에 대해 반드시 위에 제공된 [실시간 정보]와 
+                학습된 [지침서/보고서] 내용을 바탕으로 종합적인 컨설팅을 제공해줘.
+                
+                {context_for_ai}
                 
                 질문: {last_user_msg}
                 """
                 
-                # 4. 답변 생성 및 출력
+                # [답변 생성]
                 res = qa_chain.invoke({"query": final_query})
                 full_response = res["result"]
                 
-                # 타이팅 효과
+                # 타이핑 효과
                 temp_text = ""
                 for char in full_response:
                     temp_text += char
@@ -300,23 +305,19 @@ if st.session_state.messages and isinstance(st.session_state.messages[-1], Human
                     time.sleep(0.005)
                 message_placeholder.markdown(full_response)
                 
-                # 5. 답변의 근거 및 참고 문헌 상세 표시
+                # 4. 📍 답변의 근거 및 참고 문헌 (카드형 UI 개선)
                 if res.get("source_documents"):
-                    with st.expander("📍 답변의 근거 및 참고 문헌"):
+                    with st.expander("📍 답변의 핵심 근거 및 참고 문헌 확인"):
                         for i, doc in enumerate(res["source_documents"]):
-                            # 파일명 및 페이지 정보 추출
                             source_file = os.path.basename(doc.metadata.get('source', '지침서'))
-                            page_info = f", {doc.metadata.get('page')}페이지" if doc.metadata.get('page') else ""
+                            page_info = f"{doc.metadata.get('page')}페이지" if doc.metadata.get('page') else "N/A"
                             
-                            st.markdown(f"**[{i+1}] {source_file}{page_info}**")
-                            
-                            # 참고한 텍스트 본문 (최대 200자 추출)
-                            content = doc.page_content.strip()
-                            if len(content) > 200:
-                                content = content[:200] + "..."
-                            
-                            st.info(content)
-                            st.divider()
+                            st.markdown(f"""
+                                <div style="border-left: 3px solid #3fb950; padding: 10px; background-color: rgba(63, 185, 80, 0.05); margin-bottom: 10px; border-radius: 4px;">
+                                    <span style="font-weight: bold; color: {txt_col};">[{i+1}] {source_file} (p.{page_info})</span><br>
+                                    <div style="font-size: 12px; color: {sub_txt_col}; margin-top: 5px;">{doc.page_content.strip()[:300]}...</div>
+                                </div>
+                            """, unsafe_allow_html=True)
             
-            # 최종 답변을 세션 상태에 저장하여 기록 유지
+            # 대화 기록 저장
             st.session_state.messages.append(AIMessage(content=full_response))
