@@ -5,6 +5,7 @@ import zipfile
 import requests
 from datetime import datetime
 from dotenv import load_dotenv
+from styles.style import apply_custom_style
 
 # 1. 도구 임포트
 from tools.weather_tool import get_weather_info 
@@ -28,64 +29,16 @@ load_dotenv()
 # --- 페이지 기본 설정 ---
 st.set_page_config(page_title="Farm-Mate-AI", page_icon="🌱", layout="wide")
 
-# --- 커스텀 CSS (심플 & 각진 디자인) ---
-st.markdown("""
-    <style>
-    /* 전체 배경 및 폰트 */
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap');
-    
-    html, body, [data-testid="stsidebar"] {
-        font-family: 'Inter', sans-serif;
-    }
+if "theme" not in st.session_state:
+    st.session_state.theme = "Dark"
 
-    /* 각진 카드 컨테이너 */
-    .farm-card {
-        background-color: #1a1c24;
-        border: 1px solid #30363d;
-        border-radius: 0px; /* 각지게 설정 */
-        padding: 24px;
-        margin-bottom: 20px;
-        height: 100%;
-    }
+with st.sidebar:
+    st.markdown("### 🎨 UI THEME")
+    theme_choice = st.radio("Select Mode", ["Dark", "Light"], horizontal=True, label_visibility="collapsed")
+    st.session_state.theme = theme_choice
 
-    /* 카드 타이틀 (작고 연한 회색) */
-    .card-label {
-        color: #8b949e;
-        font-size: 12px;
-        font-weight: 600;
-        text-transform: uppercase;
-        letter-spacing: 1px;
-        margin-bottom: 8px;
-    }
-
-    /* 카드 메인 수치 (크고 하얀색) */
-    .card-value {
-        color: #ffffff;
-        font-size: 32px;
-        font-weight: 700;
-        margin-bottom: 4px;
-    }
-
-    /* 카드 하단 보조 텍스트 */
-    .card-sub {
-        color: #58a6ff;
-        font-size: 14px;
-    }
-
-    /* 구분선 스타일 */
-    hr {
-        border: 0;
-        border-top: 1px solid #30363d;
-        margin: 30px 0;
-    }
-
-    /* 사이드바 스타일링 */
-    [data-testid="stSidebar"] {
-        background-color: #0d1117;
-        border-right: 1px solid #30363d;
-    }
-    </style>
-    """, unsafe_allow_html=True)
+# --- 2. 스타일 파일 호출 (기존 CSS 코드 대체) ---
+apply_custom_style(st.session_state.theme)
 
 # --- [로직] 데이터 로드 및 초기화 ---
 @st.cache_resource
