@@ -25,76 +25,65 @@ except ImportError:
 
 load_dotenv()
 
-# --- 1. 페이지 설정 및 기본 스타일 ---
+# --- 페이지 기본 설정 ---
 st.set_page_config(page_title="Farm-Mate-AI", page_icon="🌱", layout="wide")
 
-bg_col = "#0D1117"    # 전체 배경 (GitHub Dark 느낌)
-side_col = "#0D1117"  # 사이드바
-card_col = "#161B22"  # 카드 배경
-txt_col = "#E6EDF3"   # 메인 글자색
-sub_txt_col = "#8B949E"
-border_col = "#30363D"
-
-# --- 2. 강력한 다크모드 전용 CSS ---
-st.markdown(f"""
+# --- 커스텀 CSS (심플 & 각진 디자인) ---
+st.markdown("""
     <style>
-    /* 전체 앱 배경 */
-    .stApp {{
-        background-color: {bg_col} !important;
-        color: {txt_col} !important;
-    }}
-
-    /* 텍스트 시인성 확보: 모든 글자를 밝은 회색으로 강제 */
-    p, span, label, h1, h2, h3, h4, li {{
-        color: {txt_col} !important;
-    }}
-
-    /* 사이드바 스타일 */
-    [data-testid="stSidebar"] {{
-        background-color: {side_col} !important;
-        border-right: 1px solid {border_col};
-    }}
-
-    /* 선택창(Selectbox) 스타일: 배경은 어둡게, 글자는 밝게 */
-    div[data-baseweb="select"] > div {{
-        background-color: {card_col} !important;
-        color: {txt_col} !important;
-        border: 1px solid {border_col} !important;
-    }}
+    /* 전체 배경 및 폰트 */
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap');
     
-    /* 선택창 내부 리스트 아이템 */
-    div[data-baseweb="popover"] li {{
-        background-color: {card_col} !important;
-        color: {txt_col} !important;
-    }}
+    html, body, [data-testid="stsidebar"] {
+        font-family: 'Inter', sans-serif;
+    }
 
-    /* 채팅 메시지 박스 (가장 문제였던 부분) */
-    [data-testid="stChatMessage"] {{
-        background-color: {card_col} !important;
-        border: 1px solid {border_col} !important;
-        border-radius: 8px !important;
-    }}
-    [data-testid="stChatMessage"] p {{
-        color: {txt_col} !important; /* 채팅 글자색 강제 */
-    }}
-
-    /* 채팅 입력창 배경 및 테두리 */
-    [data-testid="stChatInput"] textarea {{
-        background-color: {card_col} !important;
-        color: {txt_col} !important;
-        border: 1px solid {border_col} !important;
-    }}
-
-    /* 농장 대시보드 카드 */
-    .farm-card {{
-        background-color: {card_col} !important;
-        border: 1px solid {border_col} !important;
-        border-radius: 12px !important;
+    /* 각진 카드 컨테이너 */
+    .farm-card {
+        background-color: #1a1c24;
+        border: 1px solid #30363d;
+        border-radius: 0px; /* 각지게 설정 */
         padding: 24px;
         margin-bottom: 20px;
-    }}
-    .card-label {{ color: {sub_txt_col} !important; font-size: 13px; font-weight: bold; }}
-    .card-value {{ color: {txt_col} !important; font-size: 32px; font-weight: bold; }}
+        height: 100%;
+    }
+
+    /* 카드 타이틀 (작고 연한 회색) */
+    .card-label {
+        color: #8b949e;
+        font-size: 12px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        margin-bottom: 8px;
+    }
+
+    /* 카드 메인 수치 (크고 하얀색) */
+    .card-value {
+        color: #ffffff;
+        font-size: 32px;
+        font-weight: 700;
+        margin-bottom: 4px;
+    }
+
+    /* 카드 하단 보조 텍스트 */
+    .card-sub {
+        color: #58a6ff;
+        font-size: 14px;
+    }
+
+    /* 구분선 스타일 */
+    hr {
+        border: 0;
+        border-top: 1px solid #30363d;
+        margin: 30px 0;
+    }
+
+    /* 사이드바 스타일링 */
+    [data-testid="stSidebar"] {
+        background-color: #0d1117;
+        border-right: 1px solid #30363d;
+    }
     </style>
     """, unsafe_allow_html=True)
 
