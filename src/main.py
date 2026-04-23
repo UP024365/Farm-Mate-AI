@@ -13,6 +13,7 @@ from styles.style import apply_custom_style
 from tools.weather_tool import get_weather_info 
 from tools.price_tool import get_crop_price
 from tools.pest_tool import get_pest_info
+from tools.pest_db import PEST_ALERTS
 from tools.tech_tool import get_crop_tech_info
 from tools.weekly_tool import get_weekly_farming_info
 
@@ -175,6 +176,22 @@ col_left, col_right = st.columns(2)
 with col_left:
     st.markdown('<div class="farm-card"><div class="card-label">📡 병해충 발생 현황 및 분석</div>', unsafe_allow_html=True)
     
+    # 1. Pest_db.py에서 현재 선택된 작물의 특보 가져오기
+    if selected_crop_ko in PEST_ALERTS:
+        alert = PEST_ALERTS[selected_crop_ko]
+        
+        # 강조된 알림창 출력
+        st.error(f"🚨 **{selected_crop_ko} 특보: {alert['status']}**")
+        st.markdown(f"""
+            <div style="background-color: rgba(255, 123, 114, 0.1); padding: 10px; border-radius: 5px; border-left: 5px solid #ff7b72;">
+                <p style="margin-bottom: 5px;"><strong>⚠️ 주의 병해충:</strong> {', '.join(alert['items'])}</p>
+                <p style="font-size: 14px;"><strong>💡 관리 요령:</strong> {alert['content']}</p>
+            </div>
+        """, unsafe_allow_html=True)
+    
+    st.markdown("<hr style='margin: 15px 0; border-top: 1px dashed #30363d;'>", unsafe_allow_html=True)
+
+    # 2. 기존 전국 주요 발령 정보 (생략 가능하거나 아래로 배치)
     if isinstance(pest, dict) and "data" in pest:
         all_pests = pest['data']
         # 1. 우리 작물 관련 정보 필터링
@@ -262,6 +279,11 @@ if st.session_state.messages and isinstance(st.session_state.messages[-1], Human
                 
                 # 실시간 시세 정보 요약 (AI가 읽을 수 있도록 추가)
                 price_summary = f"현재 {selected_crop_ko} 시세: {price['price']}원 ({price.get('direction', '')} {price.get('value', '0')}원). 추천: {price.get('recommendation', '없음')}" if price else "시세 정보 없음"
+                current_alert = PEST_ALERTS.get(selected_crop_ko)
+                if current_alert:
+                    pest_context = f"{selected_crop_ko} {current_alert['status']} 발령 중: {', '.join(current_alert['items'])}. 핵심 요령: {current_alert['content']}"
+                else:
+                    pest_context = "현재 선택하신 작물에 대한 특별한 병해충 특보 사항은 없습니다."
 
                 # [통합 컨텍스트 구성]
                 context_for_ai = f"""
@@ -270,8 +292,8 @@ if st.session_state.messages and isinstance(st.session_state.messages[-1], Human
                 - 현재 위치: {selected_location}
                 - 현재 날씨: {weather_summary}
                 - 실시간 시세: {price_summary}
-                - 병해충 상황: {pest_summary}
-                - 업로드된 PDF 보고서(2023-2026 병해충 발생정보)가 데이터베이스에 포함되어 있음.
+                - **최신 병해충 특보: {pest_context}** # 🔥 이 부분이 핵심!
+                - 업로드된 PDF 보고서 데이터가 데이터베이스에 포함되어 있음.
                 """
                 
                 # [RAG 체인 설정] 작물 필터링 적용
