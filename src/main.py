@@ -36,6 +36,20 @@ st.set_page_config(page_title="Farm-Mate-AI", page_icon="🌱", layout="wide")
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
+def get_db_last_updated():
+    try:
+        import os
+        db_path = "src/tools/pest_db.py"
+        if os.path.exists(db_path):
+            with open(db_path, "r", encoding="utf-8") as f:
+                first_line = f.readline()
+                if "Last Updated" in first_line:
+                    # "# Last Updated: 2026-05-09 19:11" 에서 날짜 부분만 추출
+                    return first_line.split(": ")[1].strip()
+        return "데이터 없음"
+    except Exception:
+        return "확인 불가"
+    
 # --- 2. 사이드바 설정 ---
 with st.sidebar:
     st.title("🌱 Farm-Mate")
@@ -65,12 +79,43 @@ with st.sidebar:
 
     st.markdown("---")
     st.subheader("🔄 Data Management")
-    if st.button("병해충 정보 즉시 업데이트", help="농사로 API에서 최신 병해충 공보를 다시 불러옵니다."):
-        with st.spinner("최신 데이터를 동기화 중입니다..."):
-            st.cache_data.clear() 
-            st.rerun()
-            
-    st.info("💡 매월 1일 정보가 자동으로 갱신되지만, 이 버튼을 통해 수동으로 업데이트할 수 있습니다.")
+    
+    if st.button("병해충 정보 즉시 업데이트", help="농사로 API에서 최신 공보를 다운로드하고 GPT로 분석하여 DB를 갱신합니다."):
+        with st.spinner("최신 데이터를 동기화 및 AI 분석 중입니다..."):
+            try:
+                # 1. 최신 PDF 다운로드 (src/tools/pest_downloader.py)
+                from tools.pest_downloader import download_latest_pest_pdf
+                download_res = download_latest_pest_pdf()
+                
+                if download_res["success"]:
+                    # 2. GPT를 이용한 10대 작물 요약 및 pest_db.py 갱신 (src/tools/pest_summarizer.py)
+                    from tools.pest_summarizer import summarize_pdf_to_db
+                    update_date = summarize_pdf_to_db(download_res["save_path"])
+                    
+                    if update_date:
+                        # 3. 변경된 pest_db.py 내용을 즉시 적용하기 위해 모듈 리로드
+                        import importlib
+                        import tools.pest_db
+                        importlib.reload(tools.pest_db)
+                        
+                        # 4. 캐시 삭제 및 성공 메시지
+                        st.cache_data.clear()
+                        st.success(f"✅ {download_res['title']} 반영 완료! (업데이트: {update_date})")
+                        time.sleep(1.5)
+                        st.rerun()
+                    else:
+                        st.error("❌ AI 요약 과정에서 오류가 발생했습니다.")
+                else:
+                    st.error(f"❌ 다운로드 실패: {download_res['error']}")
+                    
+            except Exception as e:
+                st.error(f"❌ 시스템 오류: {str(e)}")
+
+    # 버튼 바로 아래에 현재 DB 날짜 표시
+    last_date = get_db_last_updated()
+    st.caption(f"📅 현재 정보 기준일: **{last_date}**")
+
+    st.info("💡 업데이트 시 농사로 PDF 지침서를 직접 분석하여 10대 작물 정보를 갱신합니다.")
     
 txt_col, sub_txt_col, border_col, bg_col = apply_custom_style()
 
