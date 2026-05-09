@@ -40,7 +40,6 @@ if "messages" not in st.session_state:
 with st.sidebar:
     st.title("🌱 Farm-Mate")
     
-    # 위치 선택
     LOCATIONS = {
         "충청북도 충주시": {"nx": 76, "ny": 114},
         "충청북도 청주시": {"nx": 69, "ny": 107},
@@ -56,7 +55,6 @@ with st.sidebar:
     
     st.divider()
 
-    # 작물 선택
     crop_name_map = {
         "사과": "apple", "마늘": "garlic", "양파": "onion", "복숭아": "peach", 
         "고추": "pepper", "감자": "potato", "무": "radish", "딸기": "strawberry", 
@@ -65,8 +63,15 @@ with st.sidebar:
     selected_crop_ko = st.selectbox("TARGET CROP", list(crop_name_map.keys()))
     selected_crop_en = crop_name_map[selected_crop_ko]
 
-# 🔥 [핵심 위치] 사이드바 설정이 모두 끝난 바깥에서 호출!
-# 함수를 실행하면서 반환된 색상 변수들을 txt_col 등에 저장합니다.
+    st.markdown("---")
+    st.subheader("🔄 Data Management")
+    if st.button("병해충 정보 즉시 업데이트", help="농사로 API에서 최신 병해충 공보를 다시 불러옵니다."):
+        with st.spinner("최신 데이터를 동기화 중입니다..."):
+            st.cache_data.clear() 
+            st.rerun()
+            
+    st.info("💡 매월 1일 정보가 자동으로 갱신되지만, 이 버튼을 통해 수동으로 업데이트할 수 있습니다.")
+    
 txt_col, sub_txt_col, border_col, bg_col = apply_custom_style()
 
 # --- 3. 데이터 로드 및 초기화 ---
@@ -139,7 +144,7 @@ with col2:
         st.markdown(f"""
             <div class="farm-card">
                 <div class="card-label">{selected_crop_ko} Market Price</div>
-                <div class="card-value">{price['price']}원</div>
+                <div class="card-value">{price['price']}</div>
                 <div style="color:{delta_color}; font-size:14px; margin-bottom:10px;">
                     {price.get('direction')} {price.get('value')}원
                 </div>
