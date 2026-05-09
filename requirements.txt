@@ -1,16 +1,30 @@
+# Web Framework & UI
 streamlit
+
+# LangChain & AI
 langchain
 langchain-community
 langchain-openai
 langchain-core
 langchain-chroma
-python-dotenv
+openai
+
+# Data Processing & Storage
 pandas
-requests
 pypdf
 chromadb
+python-dotenv
+
+# Network & API
+requests
+urllib3
+pyngrok
+
+# Google Services
 google-api-python-client
 google-auth-httplib2
 google-auth-oauthlib
 gdown
-urllib3
+
+# Utilities
+pillow
