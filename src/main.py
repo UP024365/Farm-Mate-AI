@@ -276,6 +276,7 @@ with col_left:
         st.write("데이터를 불러올 수 없습니다.")
     st.markdown('</div>', unsafe_allow_html=True)
 
+
 with col_right:
     st.markdown('<div class="farm-card"><div class="card-label">🔔 영농 주의보 알람</div>', unsafe_allow_html=True)
     # 날씨 데이터(weather)를 기반으로 자동 알람 생성
