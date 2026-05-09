@@ -226,9 +226,19 @@ col_left, col_right = st.columns(2)
 with col_left:
     st.markdown('<div class="farm-card"><div class="card-label">📡 병해충 발생 현황 및 분석</div>', unsafe_allow_html=True)
     
-    # 1. Pest_db.py에서 현재 선택된 작물의 특보 가져오기
-    if selected_crop_ko in PEST_ALERTS:
-        alert = PEST_ALERTS[selected_crop_ko]
+    # [핵심 수정] 실시간으로 변경된 pest_db.py를 다시 로드합니다.
+    import importlib
+    import tools.pest_db
+    importlib.reload(tools.pest_db)  # 메모리에 로드된 pest_db를 최신 상태로 갱신
+    
+    # 갱신된 모듈에서 PEST_ALERTS 데이터를 가져옵니다.
+    current_alerts = tools.pest_db.PEST_ALERTS
+    
+    # 1. 현재 선택된 작물의 특보 정보 확인
+    is_target_alert = selected_crop_ko in current_alerts
+    
+    if is_target_alert:
+        alert = current_alerts[selected_crop_ko]
         
         # 강조된 알림창 출력
         st.error(f"🚨 **{selected_crop_ko} 특보: {alert['status']}**")
@@ -241,41 +251,33 @@ with col_left:
     
     st.markdown("<hr style='margin: 15px 0; border-top: 1px dashed #30363d;'>", unsafe_allow_html=True)
 
-    # 2. 기존 전국 주요 발령 정보 (생략 가능하거나 아래로 배치)
+    # 2. 전국 주요 발령 정보 (기존 API 제목 데이터)
     if isinstance(pest, dict) and "data" in pest:
         all_pests = pest['data']
-        # 1. 우리 작물 관련 정보 필터링
-        crop_pests = [p for p in all_pests if selected_crop_ko in p['name']]
         
-        # 2. 전국 주요 발령 정보 드롭다운
         with st.expander(f"📍 전국 주요 발령 정보 ({len(all_pests)}건) 확인하기"):
             for p in all_pests:
-                is_target = selected_crop_ko in p['name']
-                
-                # 우리 작물 관련 정보는 강조 스타일 적용
-                bg_style = "background-color: rgba(255, 123, 114, 0.15);" if is_target else ""
-                border_style = "border-left: 3px solid #ff7b72;" if is_target else "border-left: 1px solid #30363d;"
-                
                 st.markdown(f"""
-                    <div style='{bg_style} {border_style} padding: 8px 12px; border-radius: 4px; margin-bottom: 5px;'>
-                        <span style='font-size: 13px; color: {txt_col};'>{'⚠️ ' if is_target else '• '}{p['name']}</span>
+                    <div style='border-left: 1px solid #30363d; padding: 8px 12px; border-radius: 4px; margin-bottom: 5px;'>
+                        <span style='font-size: 13px; color: {txt_col};'>• {p['name']}</span>
                         <span style='font-size: 11px; color: #8b949e; float: right;'>{p.get('date', '')}</span>
                     </div>
                 """, unsafe_allow_html=True)
 
         st.markdown("<hr style='margin: 15px 0; border-top: 1px dashed #30363d;'>", unsafe_allow_html=True)
 
-        # 3. 결론: 우리 작물 관련 요약 (이 부분은 항상 노출)
+        # 3. 결론: 우리 작물 관련 요약
         st.markdown(f"**📢 {selected_crop_ko} 관련 분석 결과**")
-        if crop_pests:
-            st.error(f"🚨 주의: 현재 {selected_crop_ko} 관련 특보가 {len(crop_pests)}건 확인되었습니다. 하단 AI 상담센터에서 상세 대처법을 문의하세요.")
+        
+        # [수정] 갱신된 current_alerts를 기준으로 결과 메시지 출력
+        if is_target_alert:
+            st.error(f"🚨 주의: 현재 {selected_crop_ko} 관련 특보가 확인되었습니다. 위 상세 대처법을 확인하세요.")
         else:
             st.success(f"✅ 안심: 현재 전국 특보 중 {selected_crop_ko}와 직접 관련된 정보는 없습니다.")
             
     else:
         st.write("데이터를 불러올 수 없습니다.")
     st.markdown('</div>', unsafe_allow_html=True)
-
 
 with col_right:
     st.markdown('<div class="farm-card"><div class="card-label">🔔 영농 주의보 알람</div>', unsafe_allow_html=True)
