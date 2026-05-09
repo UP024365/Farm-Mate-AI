@@ -5,7 +5,9 @@ import zipfile
 import requests
 from datetime import datetime
 from dotenv import load_dotenv
-
+import smtplib
+from email.mime.text import MIMEText
+from email.header import Header
 # 스타일 모듈 임포트
 from styles.style import apply_custom_style
 
@@ -29,12 +31,51 @@ except ImportError:
 
 load_dotenv()
 
+receiver = os.getenv("EMAIL_RECEIVER", "본인기본이메일@gmail.com") # 설정값 없으면 기본값 사용
+
 # --- 1. 페이지 기본 설정 ---
 st.set_page_config(page_title="Farm-Mate-AI", page_icon="🌱", layout="wide")
 
 # 세션 상태 초기화
 if "messages" not in st.session_state:
     st.session_state.messages = []
+
+if "sent_alerts" not in st.session_state:
+    st.session_state.sent_alerts = []
+# 이메일 전송 함수
+from email.mime.text import MIMEText
+from email.header import Header
+
+def send_email_alert(subject, message, to_email):
+
+    sender_email = os.getenv("EMAIL_ADDRESS")
+    sender_password = os.getenv("EMAIL_PASSWORD")
+
+    msg = MIMEText(message, "plain", "utf-8")
+
+    msg["Subject"] = str(Header(subject, "utf-8"))
+    msg["From"] = sender_email
+    msg["To"] = to_email
+
+    try:
+        server = smtplib.SMTP("smtp.gmail.com", 587)
+
+        server.starttls()
+
+        server.login(sender_email, sender_password)
+
+        server.sendmail(
+            sender_email,
+            to_email,
+            msg.as_string()
+        )
+
+        server.quit()
+
+        print("이메일 전송 성공")
+
+    except Exception as e:
+        print("이메일 전송 실패:", e)
 
 def get_db_last_updated():
     try:
@@ -238,18 +279,80 @@ with col_left:
     is_target_alert = selected_crop_ko in current_alerts
     
     if is_target_alert:
+
         alert = current_alerts[selected_crop_ko]
-        
-        # 강조된 알림창 출력
+
+    # 중복 발송 방지 ID
+        alert_id = f"{selected_crop_ko}_{alert['status']}"
+
+        if alert_id not in st.session_state.sent_alerts:
+
+        # GPT 행동 가이드 생성
+            prompt_text = f"""
+            현재 {selected_crop_ko} 작물에 병해충 특보가 발생했습니다.
+
+            병해충:
+            {', '.join(alert['items'])}
+
+            농업 전문가처럼 아래 형식으로 알려줘.
+
+            1. 지금 해야 할 작업
+            2. 준비해야 할 것
+            3. 주의사항
+
+            짧고 명확하게 작성해줘.
+            """
+
+            response = llm.invoke(prompt_text)
+
+            email_message = f"""
+            [Farm-Mate 병해충 긴급 알림]
+
+            작물: {selected_crop_ko}
+
+            상태: {alert['status']}
+
+            병해충:
+            {', '.join(alert['items'])}
+
+            ===== 대응 가이드 =====
+
+            {response.content}
+            """
+
+            send_email_alert(
+                f"[Farm-Mate] {selected_crop_ko} 병해충 특보 발생",
+                email_message,
+                receiver
+            )
+
+            st.session_state.sent_alerts.append(alert_id)
+
+        # 화면 출력
         st.error(f"🚨 **{selected_crop_ko} 특보: {alert['status']}**")
+
         st.markdown(f"""
-            <div style="background-color: rgba(255, 123, 114, 0.1); padding: 10px; border-radius: 5px; border-left: 5px solid #ff7b72;">
-                <p style="margin-bottom: 5px;"><strong>⚠️ 주의 병해충:</strong> {', '.join(alert['items'])}</p>
-                <p style="font-size: 14px;"><strong>💡 관리 요령:</strong> {alert['content']}</p>
-            </div>
-        """, unsafe_allow_html=True)
-    
-    st.markdown("<hr style='margin: 15px 0; border-top: 1px dashed #30363d;'>", unsafe_allow_html=True)
+<div style="
+    background-color: rgba(255,123,114,0.1);
+    padding:15px;
+    border-radius:10px;
+    border-left:5px solid #ff7b72;
+">
+
+<h4>⚠️ 주의 병해충</h4>
+
+<p>
+{', '.join(alert['items'])}
+</p>
+
+<h4>💡 관리 요령</h4>
+
+<p>
+{alert['content']}
+</p>
+
+</div>
+""", unsafe_allow_html=True)
 
     # 2. 전국 주요 발령 정보 (기존 API 제목 데이터)
     if isinstance(pest, dict) and "data" in pest:
@@ -280,22 +383,111 @@ with col_left:
     st.markdown('</div>', unsafe_allow_html=True)
 
 with col_right:
-    st.markdown('<div class="farm-card"><div class="card-label">🔔 영농 주의보 알람</div>', unsafe_allow_html=True)
-    # 날씨 데이터(weather)를 기반으로 자동 알람 생성
+    st.markdown(
+        '<div class="farm-card"><div class="card-label">🔔 영농 주의보 알람</div>',
+        unsafe_allow_html=True
+    )
+
     if weather:
         temp = float(weather.get('temp', 20))
+        humidity = float(weather.get('humidity', 50))
         sky = weather.get('sky', '')
-        
+
         alerts = []
-        if temp >= 30: alerts.append("☀️ 고온 주의: 정오 시간대 야외 작업을 자제하고 관수에 유의하세요.")
-        if temp <= 5: alerts.append("❄️ 저온 주의: 시설하우스 보온 관리에 신경 써주세요.")
-        if "비" in sky or "소나기" in sky: alerts.append("☔ 강수 예보: 비료 살포를 미루고 배수로를 점검하세요.")
-        if not alerts: alerts.append("🌿 현재 기상 조건이 안정적입니다. 계획된 농작업을 진행하세요.")
-        
+
+        # ☀️ 폭염 특보
+        if temp >= 33:
+            alerts.append("☀️ 폭염 특보: 작물 고온 피해 주의")
+            alert_id = f"heat_{temp}"
+
+            if alert_id not in st.session_state.sent_alerts:
+                weather_prompt = f"""
+                현재 폭염 상태입니다.
+                현재 기온: {temp}도
+                습도: {humidity}%
+
+                농업 전문가처럼 아래 형식으로 작성하세요.
+                [지금 해야 할 작업]
+                [준비해야 할 것]
+                [주의사항]
+
+                실제 농민이 바로 행동할 수 있도록 구체적으로 작성하세요.
+                """
+                response = llm.invoke(weather_prompt)
+                
+                # 수신자를 .env에서 불러온 receiver 변수로 변경
+                send_email_alert(
+                    "[Farm-Mate] 폭염 특보 알림",
+                    response.content,
+                    receiver
+                )
+                st.session_state.sent_alerts.append(alert_id)
+
+        # ❄️ 저온 특보
+        if temp <= 3:
+            alerts.append("❄️ 저온 특보: 냉해 피해 주의")
+            alert_id = f"cold_{temp}"
+
+            if alert_id not in st.session_state.sent_alerts:
+                cold_prompt = f"""
+                현재 저온 상태입니다.
+                현재 기온: {temp}도
+
+                농업 전문가처럼 아래 형식으로 작성하세요.
+                [지금 해야 할 작업]
+                [준비해야 할 것]
+                [주의사항]
+                """
+                response = llm.invoke(cold_prompt)
+                
+                # 수신자를 receiver 변수로 변경
+                send_email_alert(
+                    "[Farm-Mate] 저온 특보 알림",
+                    response.content,
+                    receiver
+                )
+                st.session_state.sent_alerts.append(alert_id)
+
+        # ☔ 강수 특보
+        if "비" in sky or "소나기" in sky:
+            alerts.append("☔ 강수 예보: 배수로 및 시설물 점검 필요")
+            alert_id = f"rain_{sky}"
+
+            if alert_id not in st.session_state.sent_alerts:
+                rain_prompt = f"""
+                현재 강수 예보 상태입니다.
+                날씨 상태: {sky}
+
+                농업 전문가처럼 아래 형식으로 작성하세요.
+                [지금 해야 할 작업]
+                [준비해야 할 것]
+                [주의사항]
+                """
+                response = llm.invoke(rain_prompt)
+                
+                # 수신자를 receiver 변수로 변경
+                send_email_alert(
+                    "[Farm-Mate] 강수 특보 알림",
+                    response.content,
+                    receiver
+                )
+                st.session_state.sent_alerts.append(alert_id)
+
+        # 🌫️ 고습 특보
+        if humidity >= 85:
+            alerts.append("🌫️ 고습 환경: 곰팡이병 발생 위험 증가")
+
+        # 특이사항 없을 때
+        if not alerts:
+            alerts.append("🌿 현재 기상 조건이 안정적입니다.")
+
+        # 화면 출력
         for alert in alerts:
             st.info(alert)
+
     else:
-        st.write("알람 정보를 생성할 수 없습니다.")
+        st.write("날씨 데이터를 불러올 수 없습니다.")
+
     st.markdown('</div>', unsafe_allow_html=True)
 
 # --- 섹션 3: AI 상담소 (업데이트된 통합 로직) ---
