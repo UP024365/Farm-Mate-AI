@@ -573,18 +573,18 @@ if st.session_state.messages and isinstance(st.session_state.messages[-1], Human
                 message_placeholder.markdown(full_response)
                 
                 # 4. 📍 답변의 근거 및 참고 문헌 (카드형 UI 개선)
-                if res.get("source_documents"):
-                    with st.expander("📍 답변의 핵심 근거 및 참고 문헌 확인"):
-                        for i, doc in enumerate(res["source_documents"]):
-                            source_file = os.path.basename(doc.metadata.get('source', '지침서'))
-                            page_info = f"{doc.metadata.get('page')}페이지" if doc.metadata.get('page') else "N/A"
-                            
-                            st.markdown(f"""
-                                <div style="border-left: 3px solid #3fb950; padding: 10px; background-color: rgba(63, 185, 80, 0.05); margin-bottom: 10px; border-radius: 4px;">
-                                    <span style="font-weight: bold; color: {txt_col};">[{i+1}] {source_file} (p.{page_info})</span><br>
-                                    <div style="font-size: 12px; color: {sub_txt_col}; margin-top: 5px;">{doc.page_content.strip()[:300]}...</div>
-                                </div>
-                            """, unsafe_allow_html=True)
+                #if res.get("source_documents"):
+                #    with st.expander("📍 답변의 핵심 근거 및 참고 문헌 확인"):
+                #        for i, doc in enumerate(res["source_documents"]):
+                #            source_file = os.path.basename(doc.metadata.get('source', '지침서'))
+                #            page_info = f"{doc.metadata.get('page')}페이지" if doc.metadata.get('page') else "N/A"
+                #            
+                #            st.markdown(f"""
+                #                <div style="border-left: 3px solid #3fb950; padding: 10px; background-color: rgba(63, 185, 80, 0.05); margin-bottom: 10px; border-radius: 4px;">
+                #                    <span style="font-weight: bold; color: {txt_col};">[{i+1}] {source_file} (p.{page_info})</span><br>
+                #                    <div style="font-size: 12px; color: {sub_txt_col}; margin-top: 5px;">{doc.page_content.strip()[:300]}...</div>
+                #                </div>
+                #            """, unsafe_allow_html=True)
             
             # 대화 기록 저장
             st.session_state.messages.append(AIMessage(content=full_response))
